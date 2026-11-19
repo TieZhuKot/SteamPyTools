@@ -2,7 +2,7 @@
 // @name            SteamPyTools
 // @name:zh-CN      SteamPyTools
 // @name:en         SteamPyTools
-// @version         2.5
+// @version         2.6
 // @description     SteamPyTools 增强脚本：CDKey 市场按价格/好评/已拥有游戏筛选，游戏卡片显示 Steam 好评等级与评价数，支持鼠标中键直达 Steam 商店；卖家页显示历史最低价、在售排名与最低价提示，并新增按库存数量排序；支持手动同步 Steam 已拥有/愿望单数据，多地区接口适配与本地缓存。
 // @description:en  SteamPyTools enhances SteamPy: filter CDKey listings by price, rating and owned games; show Steam review tiers and counts on game cards; open Steam store with middle click; seller page gets historical low price, sale rank, lowest-price hints and stock sorting; manual Steam library/wishlist sync with multi-region support and local caching.
 // @author          TieZhuKot
@@ -1136,7 +1136,7 @@ try {
     // 固定引用脚本自带的 jQuery，避免站点后续覆盖全局 $ / jQuery
     const $sp = window.jQuery;
     const DEBUG = true;
-    const VERSION = '2.5';
+    const VERSION = '2.6';
 
     const GM_KEY_STEAM_GAMES = 'steamGameList';
     const GM_KEY_FILTER_STATE = 'steamPriceFilterState';
@@ -1637,38 +1637,45 @@ try {
 
     function getSteamAppId(gameBlock) {
         if (!gameBlock) return null;
-        if (gameBlock.dataset.spAppId) return Number(gameBlock.dataset.spAppId);
+        const iconImg = gameBlock.querySelector('.cdkGameIcon') || gameBlock.querySelector('.gameIcon');
+        const imgUrl = iconImg
+            ? (iconImg.dataset.src || iconImg.getAttribute('src') || '').replace(/[`']/g, '').trim()
+            : '';
+        const nameEl = gameBlock.querySelector('.gameName');
+        const gameName = nameEl ? (nameEl.textContent || '').trim() : '';
+        // Vue 切页会复用同一个 DOM 节点，必须校验指纹，否则上一页的 AppID/角标会留在新卡片上
+        const fingerprint = imgUrl + '|' + gameName;
+        if (gameBlock.dataset.spAppId && gameBlock.dataset.spFingerprint === fingerprint) {
+            return Number(gameBlock.dataset.spAppId);
+        }
 
         let appId = null;
-        const iconImg = gameBlock.querySelector('.cdkGameIcon') || gameBlock.querySelector('.gameIcon');
-        if (iconImg) {
-            const imgUrl = (iconImg.dataset.src || iconImg.getAttribute('src') || '')
-                .replace(/[`']/g, '')
-                .trim();
-
-            const appsMatch = imgUrl.match(/steam\/apps\/(\d+)/);
-            if (appsMatch) {
-                appId = Number(appsMatch[1]);
-            }
-            // bundles ID 不是 Steam App ID，不能用它拼 /app/ 链接，故不再返回
-        }
+        const appsMatch = imgUrl.match(/steam\/apps\/(\d+)/);
+        if (appsMatch) appId = Number(appsMatch[1]);
+        // bundles ID 不是 Steam App ID，不能用它拼 /app/ 链接，故不再返回
 
         // 本地保存页或图片未加载时，尝试从 Steam 链接提取
         if (!appId) {
             const gameLink = gameBlock.querySelector('a[href*="steam"]');
             if (gameLink) {
-                const appsMatch = gameLink.href.match(/steam\/apps\/(\d+)/);
-                const appMatch = gameLink.href.match(/\/app\/(\d+)/);
-                const match = appsMatch || appMatch;
+                const linkApps = gameLink.href.match(/steam\/apps\/(\d+)/);
+                const linkApp = gameLink.href.match(/\/app\/(\d+)/);
+                const match = linkApps || linkApp;
                 if (match) appId = Number(match[1]);
             }
         }
 
         if (Number.isFinite(appId) && appId > 0) {
             gameBlock.dataset.spAppId = String(appId);
+            gameBlock.dataset.spFingerprint = fingerprint;
             return appId;
         }
 
+        // 节点被复用成另一个游戏但暂时取不到 AppID：清掉旧值，避免继续沿用上一页数据
+        if (gameBlock.dataset.spAppId) {
+            delete gameBlock.dataset.spAppId;
+            delete gameBlock.dataset.spFingerprint;
+        }
         d('[getSteamAppId] 无法提取 Steam App ID');
         return null;
     }
@@ -1956,11 +1963,16 @@ try {
         if (!gameBlock) return;
 
         const appId = getSteamAppId(gameBlock);
-        if (!appId) return;
+        if (!appId) {
+            renderRatingBadge(gameBlock, null);
+            return;
+        }
+        const fingerprint = gameBlock.dataset.spFingerprint;
 
-        if (wishSteamAppIds.has(appId)) {
-            const gameName = gameBlock.querySelector('.gameName');
-            if (gameName) gameName.classList.add('bg-blue');
+        const nameEl = gameBlock.querySelector('.gameName');
+        if (nameEl) {
+            if (wishSteamAppIds.has(appId)) nameEl.classList.add('bg-blue');
+            else nameEl.classList.remove('bg-blue');
         }
 
         // 优先1：站点接口自带的评分字段（老版可能存在）
@@ -1990,9 +2002,10 @@ try {
             if (!data) return;
             const level = ReviewStore.level(data);
             if (!level) return;
-            // 卡片可能已被站点重建，用 data-sp-app-id 重新定位
+            // 卡片可能被站点重建，用 data-sp-app-id + 指纹重新定位，防止异步回填到已换游戏的旧节点
             document.querySelectorAll('.gameblock').forEach(block => {
-                if (Number(block.dataset.spAppId) === Number(appId)) {
+                if (Number(block.dataset.spAppId) === Number(appId) &&
+                    (!fingerprint || block.dataset.spFingerprint === fingerprint)) {
                     renderRatingBadge(block, level);
                 }
             });
@@ -2236,21 +2249,32 @@ try {
     }
 
     function processGameOpen(gameBlock) {
-        if (gameBlock.dataset.spProcessed === 'true') return;
+        if (gameBlock.dataset.spProcessed === 'true' &&
+            gameBlock.dataset.spProcessedFingerprint === (gameBlock.dataset.spFingerprint || '')) return;
 
         const appId = getSteamAppId(gameBlock);
         if (!appId) return;
-        gameBlock.dataset.spProcessed = 'true';
 
-        gameBlock.addEventListener('mousedown', e => {
+        // 切页时 Vue 会复用节点，先移除旧监听，避免中键仍打开上一页的游戏
+        if (gameBlock.__spMousedown) gameBlock.removeEventListener('mousedown', gameBlock.__spMousedown);
+        if (gameBlock.__spAuxclick) gameBlock.removeEventListener('auxclick', gameBlock.__spAuxclick);
+
+        const onMousedown = e => {
             if (e.button !== 1 || e.ctrlKey || e.shiftKey) return;
+            const currentId = getSteamAppId(gameBlock);
+            if (!currentId) return;
             e.preventDefault();
-            window.open(`https://store.steampowered.com/app/${appId}/`, '_blank');
-        });
-        // 阻止中键默认打开原链接，避免重复开标签
-        gameBlock.addEventListener('auxclick', e => {
+            window.open(`https://store.steampowered.com/app/${currentId}/`, '_blank');
+        };
+        const onAuxclick = e => {
             if (e.button === 1) e.preventDefault();
-        });
+        };
+        gameBlock.__spMousedown = onMousedown;
+        gameBlock.__spAuxclick = onAuxclick;
+        gameBlock.addEventListener('mousedown', onMousedown);
+        gameBlock.addEventListener('auxclick', onAuxclick);
+        gameBlock.dataset.spProcessed = 'true';
+        gameBlock.dataset.spProcessedFingerprint = gameBlock.dataset.spFingerprint || '';
     }
 
     function $dom(selector) {
