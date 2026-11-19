@@ -2,7 +2,7 @@
 // @name            SteamPyTools
 // @name:zh-CN      SteamPyTools
 // @name:en         SteamPyTools
-// @version         1.1
+// @version         1.2
 // @description     SteamPyTools 增强脚本：CDKey 市场按价格/好评/已拥有游戏筛选，游戏卡片显示 Steam 好评等级与评价数，支持鼠标中键直达 Steam 商店；卖家页显示历史最低价、在售排名与最低价提示，并新增按库存数量排序；支持手动同步 Steam 已拥有/愿望单数据，多地区接口适配与本地缓存。
 // @description:en  SteamPyTools enhances SteamPy: filter CDKey listings by price, rating and owned games; show Steam review tiers and counts on game cards; open Steam store with middle click; seller page gets historical low price, sale rank, lowest-price hints and stock sorting; manual Steam library/wishlist sync with multi-region support and local caching.
 // @author          TieZhuKot
@@ -14,6 +14,7 @@
 // @grant           GM_registerMenuCommand
 // @grant           GM_notification
 // @grant           GM_cookie
+// @grant           GM_info
 // @icon            https://steampy.com/logo.ico
 // @require         https://scriptcat.org/lib/637/1.4.8/ajaxHooker.js#sha256=dTF50feumqJW36kBpbf6+LguSLAtLr7CEs3oPmyfbiM=
 // @require         https://scriptcat.org/lib/513/2.1.0/ElementGetter.js#sha256=aQF7JFfhQ7Hi+weLrBlOsY24Z2ORjaxgZNoni7pAz5U=
@@ -21,6 +22,8 @@
 // @require         https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.1/jquery.min.js
 // @connect         steampy.com
 // @connect         store.steampowered.com
+// @connect         steamcommunity.com
+// @connect         login.steampowered.com
 // @run-at          document-start
 // @license         MIT
 // @namespace       TieZhuKot
@@ -60,6 +63,11 @@
 
     function d(...args) {
         if (DEBUG) console.debug('[SteamPy++]', ...args);
+    }
+
+    function isScriptCat() {
+        const handler = (typeof GM_info !== 'undefined' && GM_info && GM_info.scriptHandler) || '';
+        return /scriptcat|script\s*cat|油猴猫/i.test(String(handler));
     }
 
     function notify(text) {
@@ -161,24 +169,66 @@
     let ownedSteamAppIds = new Set(steamGameList.own);
     let wishSteamAppIds = new Set(steamGameList.wish);
 
-    // 主动读取 Steam Cookie：脚本猫 / Tampermonkey 的 GM_xmlhttpRequest 都不认 withCredentials
-    async function getSteamCookieHeader() {
-        const url = 'https://store.steampowered.com/';
+    // Steam 登录 Cookie 可能带分区（topLevelSite），要按分区读；脚本猫与油猴的 API 形态也不同
+    const STEAM_COOKIE_TARGETS = [
+        { url: 'https://store.steampowered.com/', partitionKey: { topLevelSite: 'https://store.steampowered.com' } },
+        { url: 'https://steamcommunity.com/', partitionKey: { topLevelSite: 'https://steamcommunity.com' } }
+    ];
+
+    async function listCookies(details) {
         try {
-            let cookies;
-            if (typeof GM_cookie === 'function') {
-                cookies = await new Promise(resolve => {
-                    GM_cookie('list', { url: url }, result => resolve(result));
-                });
-            } else if (window.GM && GM.cookie && typeof GM.cookie.list === 'function') {
-                cookies = await GM.cookie.list({ url: url });
+            if (typeof GM_cookie === 'function' && typeof GM_cookie.list === 'function') {
+                return await GM_cookie.list(details);
             }
-            if (!Array.isArray(cookies) || !cookies.length) return '';
-            return cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; ');
+            if (window.GM && GM.cookie && typeof GM.cookie.list === 'function') {
+                return await GM.cookie.list(details);
+            }
+            if (typeof GM_cookie === 'function') {
+                return await new Promise(resolve => {
+                    GM_cookie('list', details, (cookies, error) => {
+                        if (error) d('GM_cookie list 错误：', error);
+                        resolve(cookies || []);
+                    });
+                });
+            }
         } catch (error) {
-            d('读取 Steam Cookie 失败：', error);
-            return '';
+            d('读取 Cookie 失败：', details.url, error);
         }
+        return [];
+    }
+
+    function cookieHeaderFrom(cookies) {
+        if (!Array.isArray(cookies)) return '';
+        const picked = new Map();
+        cookies.forEach(cookie => {
+            if (!cookie || !cookie.name) return;
+            const domain = String(cookie.domain || '').toLowerCase();
+            const score = domain.includes('steampowered.com') ? 2 : (domain.includes('steamcommunity.com') ? 1 : 0);
+            const prev = picked.get(cookie.name);
+            if (!prev || score > prev.score) {
+                picked.set(cookie.name, { score, value: cookie.value });
+            }
+        });
+        return Array.from(picked, ([name, item]) => `${name}=${item.value}`).join('; ');
+    }
+
+    async function getSteamCookieHeader() {
+        const all = [];
+        for (const target of STEAM_COOKIE_TARGETS) {
+            // 先读分区 Cookie（Chrome 第三方 Cookie 分区场景），再读普通 Cookie
+            let cookies = await listCookies({ url: target.url, partitionKey: target.partitionKey });
+            if (!cookies.length) cookies = await listCookies({ url: target.url });
+            if (!cookies.length && typeof GM_cookie === 'function') {
+                // TM 5.2+：空 partitionKey 表示读取所有分区，后面按 name 去重
+                cookies = await listCookies({ url: target.url, partitionKey: {} });
+            }
+            all.push(...cookies);
+        }
+        const header = cookieHeaderFrom(all);
+        d('Steam Cookie 读取结果：', header
+            ? header.split('; ').map(item => item.split('=')[0]).join(', ')
+            : '空');
+        return header;
     }
 
     async function syncSteamOwnGameData() {
@@ -192,8 +242,11 @@
                     method: 'GET',
                     url: 'https://store.steampowered.com/dynamicstore/userdata/',
                     timeout: 15000,
-                    anonymous: false,
+                    // 脚本猫 anonymous=true 时只发送下面显式指定的 Cookie；
+                    // Tampermonkey 则用 anonymous=false + cookie 合并同名 Cookie
+                    anonymous: isScriptCat(),
                     cookiePartition: { topLevelSite: 'https://store.steampowered.com' },
+                    nocache: true,
                     headers: {
                         'Accept': 'application/json, text/javascript, */*; q=0.01',
                         'Referer': 'https://store.steampowered.com/'
@@ -239,7 +292,7 @@
             if (state.own.length + state.wish.length + state.sub.length === 0) {
                 notify(cookieHeader
                     ? 'Steam 返回空数据，网页登录可能已失效'
-                    : '浏览器没有 Steam Cookie，请先在网页登录 store.steampowered.com');
+                    : '未读到 Steam Cookie：请登录 steam 网页，并允许脚本访问 store.steampowered.com / steamcommunity.com');
                 return false;
             }
 
@@ -856,7 +909,9 @@
     let removeContentHook = null;
 
     async function startContentMonitor() {
+        if (removeContentHook) return;
         await waitForElement('div.ivu-tabs-content div.flex-row.jc-space-flex-start.flex-wrap.w-auto');
+        if (removeContentHook) return;
 
         const pane = $sp('.ivu-tabs-tabpane').get(0);
         if (!pane || !pane.__vue__) {
@@ -884,6 +939,7 @@
 
     async function startSellListListener() {
         d('startSellListListener');
+        if (stopSellWatcher) return;
         try {
             const el = await waitForElement(
                 '#main > div.main > div.single-page-con > div.single-page > div:has(.cdkTrade-layout)'
@@ -1016,6 +1072,7 @@
 
     async function addQuantitySort() {
         try {
+            if (document.getElementById('quantitySortBtn')) return;
             const $parent = await waitForElement('.flex-row > .c-point.flex-row.align-items-center');
             if (!$parent.length || $parent.find('#quantitySortBtn').length) return;
 
@@ -1155,13 +1212,15 @@
         return location.pathname + location.search + location.hash;
     }
 
-    // 统一更新 lastPath，避免 pushState / popstate / hashchange 之间状态不一致
+    // 路径没变但初始化失败时也要重试，避免站点重复 replaceState 后脚本失效
     let lastPath = currentPath();
     function syncRouteAndHandle() {
         const nextPath = currentPath();
-        if (nextPath === lastPath) return;
+        const pathChanged = nextPath !== lastPath;
         lastPath = nextPath;
-        handlePathChange();
+        if (pathChanged || !isInitialized || !isSellerInitialized) {
+            handlePathChange();
+        }
     }
 
     const originalPushState = history.pushState;
@@ -1179,6 +1238,11 @@
 
     window.addEventListener('popstate', syncRouteAndHandle);
     window.addEventListener('hashchange', syncRouteAndHandle);
+    if (!window.onurlchange) window.onurlchange = syncRouteAndHandle;
+    document.addEventListener('DOMContentLoaded', syncRouteAndHandle);
+    window.addEventListener('load', syncRouteAndHandle);
+    // 站点可能覆盖 history 方法或在 DOM 渲染完成后才确定路径，定时兜底重试
+    setInterval(syncRouteAndHandle, 2000);
 
     elmGetter.selector($sp);
 
