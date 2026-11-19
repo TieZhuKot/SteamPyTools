@@ -2,7 +2,7 @@
 // @name            SteamPyTools
 // @name:zh-CN      SteamPyTools
 // @name:en         SteamPyTools
-// @version         3.1
+// @version         3.2
 // @description     SteamPyTools 增强脚本：CDKey 市场按价格/好评/已拥有游戏筛选，游戏卡片显示 Steam 好评等级与评价数，支持鼠标中键直达 Steam 商店；卖家页显示历史最低价、在售排名与最低价提示，并新增按库存数量排序；支持手动同步 Steam 已拥有/愿望单数据，多地区接口适配与本地缓存。
 // @description:en  SteamPyTools enhances SteamPy: filter CDKey listings by price, rating and owned games; show Steam review tiers and counts on game cards; open Steam store with middle click; seller page gets historical low price, sale rank, lowest-price hints and stock sorting; manual Steam library/wishlist sync with multi-region support and local caching.
 // @author          TieZhuKot
@@ -25,47 +25,6 @@
 // @namespace       TieZhuKot
 // ==/UserScript==
 
-/* ===== bootstrap: 在任何依赖之前打点，便于判断脚本是否被加载 ===== */
-(function () {
-    console.info('[SteamPyTools] ===== 文件已加载 =====', {
-        readyState: document.readyState,
-        href: location.href,
-        at: Date.now()
-    });
-    window.__steamPyFileLoadedAt = Date.now();
-
-    // 页面右上角红色徽章：不用开控制台也能看出脚本到底有没有加载/执行到主逻辑
-    function spShowBadge(text, color) {
-        try {
-            let badge = document.getElementById('__spDiagBadge');
-            if (!badge) {
-                badge = document.createElement('div');
-                badge.id = '__spDiagBadge';
-                badge.style.cssText = 'position:fixed;top:0;right:0;z-index:2147483647;background:#d32f2f;color:#fff;font:14px/1.6 sans-serif;padding:4px 12px;box-shadow:0 2px 6px rgba(0,0,0,.3);pointer-events:none;';
-                (document.body || document.documentElement).appendChild(badge);
-            }
-            badge.textContent = text;
-            badge.style.background = color || '#d32f2f';
-        } catch (e) {
-            console.error('[SteamPyTools] 徽章插入失败:', e);
-        }
-    }
-    window.__spShowBadge = spShowBadge;
-    spShowBadge('SteamPy 文件已加载 v2.3');
-    if (!document.body) {
-        document.addEventListener('DOMContentLoaded', function () {
-            spShowBadge('SteamPy 文件已加载 v2.3');
-        });
-    }
-
-    window.addEventListener('error', function (e) {
-        const stack = String((e.error && e.error.stack) || '');
-        const filename = String(e.filename || '');
-        if (stack.indexOf('SteamPy') >= 0 || filename.indexOf('userscript') >= 0 || filename.indexOf('SteamPyTools') >= 0) {
-            console.error('[SteamPyTools] 捕获未处理异常:', e.message, stack || filename);
-        }
-    });
-})();
 
 
 /* ===== inlined dependency: ajaxHooker.js ===== */
@@ -1135,8 +1094,8 @@ try {
 
     // 固定引用脚本自带的 jQuery，避免站点后续覆盖全局 $ / jQuery
     const $sp = window.jQuery;
-    const DEBUG = true;
-    const VERSION = '3.1';
+    const DEBUG = false;
+    const VERSION = '3.2';
 
     const GM_KEY_STEAM_GAMES = 'steamGameList';
     const GM_KEY_FILTER_STATE = 'steamPriceFilterState';
@@ -1151,33 +1110,9 @@ try {
     const KEYHOT_PATH_RE = /\/xboot\/(?:steamApp|steamGame|prkGame|(?:ru|us|tl|ars)SteamGame)\/keyHot(?:[/?]|$)/;
     const GETONE_PATH_RE = /\/xboot\/(?:steamApp|steamGame|prkGame|(?:ru|us|tl|ars)SteamGame)\/getOne(?:[/?]|$)/;
 
-    // 用 console.log 而不是 console.debug：Chrome/夸克控制台默认会隐藏 debug 级别，导致诊断日志看不到
+    // 诊断日志开关：正式版默认关闭，需要排查时把 DEBUG 改为 true
     function d(...args) {
         if (DEBUG) console.log('[SteamPyTools]', ...args);
-    }
-
-    const scriptHandler = (typeof GM_info !== 'undefined' && GM_info && GM_info.scriptHandler) || 'unknown';
-    const scriptVersion = (typeof GM_info !== 'undefined' && GM_info && GM_info.script && GM_info.script.version) || VERSION;
-    console.info('[SteamPyTools] ===== 脚本启动 =====');
-    console.info('[SteamPyTools] 版本:', scriptVersion, '| 文件内版本:', VERSION);
-    console.info('[SteamPyTools] 环境:', {
-        handler: scriptHandler,
-        href: location.href,
-        readyState: document.readyState,
-        ua: navigator.userAgent
-    });
-    console.info('[SteamPyTools] 依赖:', {
-        jQuery: typeof jQuery,
-        elmGetter: typeof elmGetter,
-        ajaxHooker: typeof ajaxHooker,
-        ajax: typeof ajax,
-        GM_cookie: typeof GM_cookie,
-        GM_xmlhttpRequest: typeof GM_xmlhttpRequest,
-        GM: typeof GM
-    });
-    console.info('[SteamPyTools] 菜单命令注册: 同步Steam数据');
-    if (typeof window.__spShowBadge === 'function') {
-        window.__spShowBadge('SteamPy 主逻辑已执行 v2.3', '#388e3c');
     }
 
     function isScriptCat() {
@@ -2459,7 +2394,7 @@ try {
             d('使用 Vue2 updated hook 模式');
         } else {
             // 新版 Vue3：没有 __vue__，改用 DOM 监听
-            console.info('[SteamPyTools] 未找到 Vue2 实例，使用 DOM 监听模式（Vue3 新版）');
+            d('未找到 Vue2 实例，使用 DOM 监听模式（Vue3 新版）');
         }
 
         startCardObserver();
@@ -2477,7 +2412,7 @@ try {
             );
             const vm = el[0] && el[0].__vue__;
             if (!vm) {
-                console.warn('[SteamPyTools] 未找到卖家列表 Vue 实例');
+                d('未找到卖家列表 Vue 实例');
                 return;
             }
 
@@ -2701,13 +2636,6 @@ try {
             isInitialized: isInitialized,
             isSellerInitialized: isSellerInitialized
         });
-        if (typeof window.__spShowBadge === 'function') {
-            window.__spShowBadge(
-                'SteamPy v' + VERSION + ' | ' + (isTargetPath() ? '市场页' : isSellerCDKeyPath() ? '卖家页' : '其他页') +
-                ' | 筛选面板=' + (isInitialized ? '已就绪' : (isTargetPath() ? '等待中' : '不适用')),
-                isInitialized || isSellerInitialized ? '#388e3c' : '#f57c00'
-            );
-        }
         if (isTargetPath() && !isInitialized) {
             d('run script in cdKey path');
             buyInit().catch(error => console.error('[SteamPyTools] buyInit 失败：', error));
