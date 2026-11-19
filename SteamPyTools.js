@@ -2,7 +2,7 @@
 // @name            SteamPyTools
 // @name:zh-CN      SteamPyTools
 // @name:en         SteamPyTools
-// @version         2.7
+// @version         2.8
 // @description     SteamPyTools 增强脚本：CDKey 市场按价格/好评/已拥有游戏筛选，游戏卡片显示 Steam 好评等级与评价数，支持鼠标中键直达 Steam 商店；卖家页显示历史最低价、在售排名与最低价提示，并新增按库存数量排序；支持手动同步 Steam 已拥有/愿望单数据，多地区接口适配与本地缓存。
 // @description:en  SteamPyTools enhances SteamPy: filter CDKey listings by price, rating and owned games; show Steam review tiers and counts on game cards; open Steam store with middle click; seller page gets historical low price, sale rank, lowest-price hints and stock sorting; manual Steam library/wishlist sync with multi-region support and local caching.
 // @author          TieZhuKot
@@ -1136,7 +1136,7 @@ try {
     // 固定引用脚本自带的 jQuery，避免站点后续覆盖全局 $ / jQuery
     const $sp = window.jQuery;
     const DEBUG = true;
-    const VERSION = '2.7';
+    const VERSION = '2.8';
 
     const GM_KEY_STEAM_GAMES = 'steamGameList';
     const GM_KEY_FILTER_STATE = 'steamPriceFilterState';
@@ -1523,7 +1523,8 @@ try {
             maxPrice: 9999,
             minRating: 0,
             isActive: false,
-            ratingFilterActive: false
+            ratingFilterActive: false,
+            hideOwned: false
         };
     }
 
@@ -1540,7 +1541,8 @@ try {
                 maxPrice: toNumber(saved.maxPrice, defaults.maxPrice),
                 minRating: toNumber(saved.minRating, defaults.minRating),
                 isActive: Boolean(saved.isActive),
-                ratingFilterActive: Boolean(saved.ratingFilterActive)
+                ratingFilterActive: Boolean(saved.ratingFilterActive),
+                hideOwned: Boolean(saved.hideOwned)
             };
         }
     };
@@ -2071,6 +2073,7 @@ try {
         .gameblock.sp-wishlisted { outline: 3px solid #2196f3 !important; outline-offset: -3px !important; }
         .gameblock.sp-owned.sp-wishlisted { outline: 3px dashed #9c27b0 !important; outline-offset: -3px !important; }
         .gameName.bg-blue { color: #1976d2 !important; font-weight: 700 !important; }
+        body.sp-hide-owned .gameblock.sp-owned { display: none !important; }
         .sp-filter-group {
             display: inline-flex;
             align-items: center;
@@ -2236,8 +2239,23 @@ try {
         });
 
         ui.appendChild(ratingFilterContainer);
+
+        const ownedToggle = document.createElement('div');
+        ownedToggle.id = 'spHideOwnedBtn';
+        ownedToggle.className = 'tagBtn sp-filter-btn';
+        ownedToggle.textContent = '隐藏已拥有';
+        ownedToggle.title = '开启后隐藏 Steam 已拥有的游戏（状态会保存）';
+        ownedToggle.onclick = () => {
+            filterState.hideOwned = !filterState.hideOwned;
+            StateManager.saveState(filterState);
+            updateOwnedToggle();
+            applyFilterGameList();
+        };
+        ui.appendChild(ownedToggle);
+
         updatePresetHighlights();
         updateRatingPresetHighlights();
+        updateOwnedToggle();
         return ui;
     }
 
@@ -2269,6 +2287,13 @@ try {
             const isMatch = filterState.ratingFilterActive && filterState.minRating === btnMin;
             btn.classList.toggle('is-active', isMatch);
         });
+    }
+
+    function updateOwnedToggle() {
+        const btn = document.getElementById('spHideOwnedBtn');
+        if (btn) btn.classList.toggle('is-active', Boolean(filterState.hideOwned));
+        document.body.classList.toggle('sp-hide-owned', Boolean(filterState.hideOwned));
+        d('隐藏已拥有开关:', Boolean(filterState.hideOwned));
     }
 
     function syncInputValues() {
@@ -2338,7 +2363,7 @@ try {
             const ratingShouldShow = !filterState.ratingFilterActive ||
                 rating >= filterState.minRating;
 
-            if (ownedSteamAppIds.has(appId)) return false;
+            if (filterState.hideOwned && ownedSteamAppIds.has(appId)) return false;
 
             return priceShouldShow && ratingShouldShow;
         });
