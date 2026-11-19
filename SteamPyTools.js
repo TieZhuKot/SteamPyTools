@@ -2,7 +2,7 @@
 // @name            SteamPyTools
 // @name:zh-CN      SteamPyTools
 // @name:en         SteamPyTools
-// @version         1.7
+// @version         1.8
 // @description     SteamPyTools 增强脚本：CDKey 市场按价格/好评/已拥有游戏筛选，游戏卡片显示 Steam 好评等级与评价数，支持鼠标中键直达 Steam 商店；卖家页显示历史最低价、在售排名与最低价提示，并新增按库存数量排序；支持手动同步 Steam 已拥有/愿望单数据，多地区接口适配与本地缓存。
 // @description:en  SteamPyTools enhances SteamPy: filter CDKey listings by price, rating and owned games; show Steam review tiers and counts on game cards; open Steam store with middle click; seller page gets historical low price, sale rank, lowest-price hints and stock sorting; manual Steam library/wishlist sync with multi-region support and local caching.
 // @author          TieZhuKot
@@ -51,10 +51,10 @@
         }
     }
     window.__spShowBadge = spShowBadge;
-    spShowBadge('SteamPy 文件已加载 v1.7');
+    spShowBadge('SteamPy 文件已加载 v1.8');
     if (!document.body) {
         document.addEventListener('DOMContentLoaded', function () {
-            spShowBadge('SteamPy 文件已加载 v1.7');
+            spShowBadge('SteamPy 文件已加载 v1.8');
         });
     }
 
@@ -1136,7 +1136,7 @@ try {
     // 固定引用脚本自带的 jQuery，避免站点后续覆盖全局 $ / jQuery
     const $sp = window.jQuery;
     const DEBUG = true;
-    const VERSION = '1.7';
+    const VERSION = '1.8';
 
     const GM_KEY_STEAM_GAMES = 'steamGameList';
     const GM_KEY_FILTER_STATE = 'steamPriceFilterState';
@@ -1147,8 +1147,9 @@ try {
     const KEYHOT_PATH_RE = /\/xboot\/(?:steamApp|steamGame|(?:ru|us|tl|ars)SteamGame)\/keyHot(?:[/?]|$)/;
     const GETONE_PATH_RE = /\/xboot\/(?:steamApp|steamGame|(?:ru|us|tl|ars)SteamGame)\/getOne(?:[/?]|$)/;
 
+    // 用 console.log 而不是 console.debug：Chrome/夸克控制台默认会隐藏 debug 级别，导致诊断日志看不到
     function d(...args) {
-        if (DEBUG) console.debug('[SteamPy++]', ...args);
+        if (DEBUG) console.log('[SteamPy++]', ...args);
     }
 
     const scriptHandler = (typeof GM_info !== 'undefined' && GM_info && GM_info.scriptHandler) || 'unknown';
@@ -1172,7 +1173,7 @@ try {
     });
     console.info('[SteamPy++] 菜单命令注册: 同步Steam数据');
     if (typeof window.__spShowBadge === 'function') {
-        window.__spShowBadge('SteamPy 主逻辑已执行 v1.7', '#388e3c');
+        window.__spShowBadge('SteamPy 主逻辑已执行 v1.8', '#388e3c');
     }
 
     function isScriptCat() {
@@ -2365,6 +2366,13 @@ try {
             isInitialized: isInitialized,
             isSellerInitialized: isSellerInitialized
         });
+        if (typeof window.__spShowBadge === 'function') {
+            window.__spShowBadge(
+                'SteamPy v1.8 | ' + (isTargetPath() ? '市场页' : isSellerCDKeyPath() ? '卖家页' : '其他页') +
+                ' | 筛选面板=' + (isInitialized ? '已就绪' : (isTargetPath() ? '等待中' : '不适用')),
+                isInitialized || isSellerInitialized ? '#388e3c' : '#f57c00'
+            );
+        }
         if (isTargetPath() && !isInitialized) {
             d('run script in cdKey path');
             buyInit().catch(error => console.error('[SteamPy++] buyInit 失败：', error));
