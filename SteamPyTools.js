@@ -2,7 +2,7 @@
 // @name            SteamPyTools
 // @name:zh-CN      SteamPyTools
 // @name:en         SteamPyTools
-// @version         2.9
+// @version         3.0
 // @description     SteamPyTools 增强脚本：CDKey 市场按价格/好评/已拥有游戏筛选，游戏卡片显示 Steam 好评等级与评价数，支持鼠标中键直达 Steam 商店；卖家页显示历史最低价、在售排名与最低价提示，并新增按库存数量排序；支持手动同步 Steam 已拥有/愿望单数据，多地区接口适配与本地缓存。
 // @description:en  SteamPyTools enhances SteamPy: filter CDKey listings by price, rating and owned games; show Steam review tiers and counts on game cards; open Steam store with middle click; seller page gets historical low price, sale rank, lowest-price hints and stock sorting; manual Steam library/wishlist sync with multi-region support and local caching.
 // @author          TieZhuKot
@@ -1136,7 +1136,7 @@ try {
     // 固定引用脚本自带的 jQuery，避免站点后续覆盖全局 $ / jQuery
     const $sp = window.jQuery;
     const DEBUG = true;
-    const VERSION = '2.9';
+    const VERSION = '3.0';
 
     const GM_KEY_STEAM_GAMES = 'steamGameList';
     const GM_KEY_FILTER_STATE = 'steamPriceFilterState';
@@ -2078,28 +2078,28 @@ try {
             display: inline-flex;
             align-items: center;
             font-family: Arial, sans-serif;
-            font-size: .11rem;
+            font-size: .13rem;
             gap: .04rem;
             padding: .04rem;
             margin-left: .06rem !important;
-            border-radius: .03rem;
-            height: .2rem;
+            border-radius: .04rem;
+            height: .25rem;
             box-sizing: border-box;
         }
         .sp-filter-btn {
             display: inline-flex;
             align-items: center;
-            padding: .02rem .05rem;
-            border-radius: .03rem;
+            padding: .04rem .08rem;
+            border-radius: .04rem;
             cursor: pointer;
-            font-size: .11rem;
+            font-size: .13rem;
             border: 1px solid #ddd;
             color: #666;
             background: transparent;
             transition: all .2s;
             box-sizing: border-box;
-            height: .18rem;
-            line-height: .14rem;
+            height: .25rem;
+            line-height: .17rem;
             white-space: nowrap;
         }
         .sp-filter-btn.is-active {
@@ -2109,26 +2109,26 @@ try {
         }
         .sp-filter-input {
             width: .34rem;
-            height: .2rem;
+            height: .28rem;
             padding: 0 .03rem;
             border: 1px solid #ccc;
-            border-radius: .03rem;
+            border-radius: .04rem;
             box-sizing: border-box;
-            font-size: .11rem;
-            line-height: .14rem;
+            font-size: .13rem;
+            line-height: .18rem;
             text-align: center;
         }
         .sp-filter-button {
             margin-left: .02rem;
-            padding: .02rem .06rem;
+            padding: .04rem .1rem;
             cursor: pointer;
             background: #409EFF !important;
             color: #fff !important;
             border: 1px solid #409EFF !important;
-            border-radius: .03rem;
-            font-size: .11rem;
-            height: .2rem;
-            line-height: .14rem;
+            border-radius: .04rem;
+            font-size: .13rem;
+            height: .28rem;
+            line-height: .2rem;
             box-sizing: border-box;
         }
         `;
@@ -2142,7 +2142,7 @@ try {
 
         const title = document.createElement('span');
         title.className = 'tag-titleOne';
-        title.textContent = '价格';
+        title.textContent = '价格筛选';
         title.title = '价格筛选';
         title.style.fontWeight = 'bold';
         ui.appendChild(title);
@@ -2151,7 +2151,7 @@ try {
         presetContainer.className = 'flex-row jc-space-flex-start align-items-center';
         presetContainer.style.gap = '.04rem';
 
-        const presets = [{ text: '0-20', min: 0, max: 20 }];
+        const presets = [{ text: '0-20元', min: 0, max: 20 }];
         presets.forEach(p => {
             const btn = document.createElement('div');
             btn.className = 'tagBtn sp-filter-btn';
@@ -2221,15 +2221,15 @@ try {
 
         const ratingTitle = document.createElement('span');
         ratingTitle.className = 'tag-titleOne';
-        ratingTitle.textContent = '好评';
+        ratingTitle.textContent = '好评筛选';
         ratingTitle.title = '好评筛选';
         ratingTitle.style.fontWeight = 'bold';
         ratingFilterContainer.appendChild(ratingTitle);
 
         const ratingPresets = [
             { text: '全部', min: 0 },
-            { text: '特好+', min: 0.8 },
-            { text: '如潮', min: 0.9 }
+            { text: '特好以上', min: 0.8 },
+            { text: '好评如潮', min: 0.9 }
         ];
 
         ratingPresets.forEach(p => {
@@ -2252,7 +2252,7 @@ try {
         const ownedToggle = document.createElement('div');
         ownedToggle.id = 'spHideOwnedBtn';
         ownedToggle.className = 'tagBtn sp-filter-btn';
-        ownedToggle.textContent = '隐已拥有';
+        ownedToggle.textContent = '隐藏已拥有';
         ownedToggle.title = '隐藏已拥有游戏（状态会保存）';
         ownedToggle.onclick = () => {
             filterState.hideOwned = !filterState.hideOwned;
