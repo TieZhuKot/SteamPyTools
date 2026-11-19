@@ -2,7 +2,7 @@
 // @name            SteamPyTools
 // @name:zh-CN      SteamPyTools
 // @name:en         SteamPyTools
-// @version         1.8
+// @version         1.9
 // @description     SteamPyTools 增强脚本：CDKey 市场按价格/好评/已拥有游戏筛选，游戏卡片显示 Steam 好评等级与评价数，支持鼠标中键直达 Steam 商店；卖家页显示历史最低价、在售排名与最低价提示，并新增按库存数量排序；支持手动同步 Steam 已拥有/愿望单数据，多地区接口适配与本地缓存。
 // @description:en  SteamPyTools enhances SteamPy: filter CDKey listings by price, rating and owned games; show Steam review tiers and counts on game cards; open Steam store with middle click; seller page gets historical low price, sale rank, lowest-price hints and stock sorting; manual Steam library/wishlist sync with multi-region support and local caching.
 // @author          TieZhuKot
@@ -51,10 +51,10 @@
         }
     }
     window.__spShowBadge = spShowBadge;
-    spShowBadge('SteamPy 文件已加载 v1.8');
+    spShowBadge('SteamPy 文件已加载 v1.9');
     if (!document.body) {
         document.addEventListener('DOMContentLoaded', function () {
-            spShowBadge('SteamPy 文件已加载 v1.8');
+            spShowBadge('SteamPy 文件已加载 v1.9');
         });
     }
 
@@ -1136,7 +1136,7 @@ try {
     // 固定引用脚本自带的 jQuery，避免站点后续覆盖全局 $ / jQuery
     const $sp = window.jQuery;
     const DEBUG = true;
-    const VERSION = '1.8';
+    const VERSION = '1.9';
 
     const GM_KEY_STEAM_GAMES = 'steamGameList';
     const GM_KEY_FILTER_STATE = 'steamPriceFilterState';
@@ -1173,7 +1173,7 @@ try {
     });
     console.info('[SteamPy++] 菜单命令注册: 同步Steam数据');
     if (typeof window.__spShowBadge === 'function') {
-        window.__spShowBadge('SteamPy 主逻辑已执行 v1.8', '#388e3c');
+        window.__spShowBadge('SteamPy 主逻辑已执行 v1.9', '#388e3c');
     }
 
     function isScriptCat() {
@@ -1706,9 +1706,13 @@ try {
                     const originalData = JSON.parse(res.responseText);
                     TempDataStore.setGameData(originalData);
                     res.responseText = JSON.stringify(originalData);
-                    d('keyHot 评分数据已写入, 条数=',
-                        Array.isArray(originalData) ? originalData.length
-                            : (originalData && originalData.result ? originalData.result.length : '未知'));
+                    const content = originalData && originalData.result && originalData.result.content;
+                    d('keyHot 评分数据已写入, 条数=', Array.isArray(content) ? content.length : '未知');
+                    d('keyHot 结构: 顶层keys=', Object.keys(originalData || {}),
+                        'result.keys=', Object.keys((originalData && originalData.result) || {}));
+                    if (Array.isArray(content) && content.length) {
+                        d('keyHot 首条游戏字段=', Object.keys(content[0] || {}));
+                    }
                 } catch (e) {
                     console.error('[SteamPy++] keyHot 接口数据处理失败：', e);
                 }
@@ -2368,7 +2372,7 @@ try {
         });
         if (typeof window.__spShowBadge === 'function') {
             window.__spShowBadge(
-                'SteamPy v1.8 | ' + (isTargetPath() ? '市场页' : isSellerCDKeyPath() ? '卖家页' : '其他页') +
+                'SteamPy v1.9 | ' + (isTargetPath() ? '市场页' : isSellerCDKeyPath() ? '卖家页' : '其他页') +
                 ' | 筛选面板=' + (isInitialized ? '已就绪' : (isTargetPath() ? '等待中' : '不适用')),
                 isInitialized || isSellerInitialized ? '#388e3c' : '#f57c00'
             );
