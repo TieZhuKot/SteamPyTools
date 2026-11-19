@@ -2,7 +2,7 @@
 // @name            SteamPyTools
 // @name:zh-CN      SteamPyTools
 // @name:en         SteamPyTools
-// @version         1.2
+// @version         1.3
 // @description     SteamPyTools 增强脚本：CDKey 市场按价格/好评/已拥有游戏筛选，游戏卡片显示 Steam 好评等级与评价数，支持鼠标中键直达 Steam 商店；卖家页显示历史最低价、在售排名与最低价提示，并新增按库存数量排序；支持手动同步 Steam 已拥有/愿望单数据，多地区接口适配与本地缓存。
 // @description:en  SteamPyTools enhances SteamPy: filter CDKey listings by price, rating and owned games; show Steam review tiers and counts on game cards; open Steam store with middle click; seller page gets historical low price, sale rank, lowest-price hints and stock sorting; manual Steam library/wishlist sync with multi-region support and local caching.
 // @author          TieZhuKot
@@ -175,19 +175,54 @@
         { url: 'https://steamcommunity.com/', partitionKey: { topLevelSite: 'https://steamcommunity.com' } }
     ];
 
+    function asCookieArray(value) {
+        if (Array.isArray(value)) return value;
+        if (value && Array.isArray(value.cookies)) return value.cookies;
+        return [];
+    }
+
     async function listCookies(details) {
         try {
-            if (typeof GM_cookie === 'function' && typeof GM_cookie.list === 'function') {
-                return await GM_cookie.list(details);
-            }
+            // 脚本猫推荐 Promise 形式：GM.cookie.list
             if (window.GM && GM.cookie && typeof GM.cookie.list === 'function') {
-                return await GM.cookie.list(details);
+                return asCookieArray(await GM.cookie.list(details));
             }
+            // 油猴 GM_cookie.list 支持 Promise / 回调；脚本猫也兼容回调形式
+            if (typeof GM_cookie === 'function' && typeof GM_cookie.list === 'function') {
+                return await new Promise(resolve => {
+                    let settled = false;
+                    const finish = value => {
+                        if (settled) return;
+                        settled = true;
+                        clearTimeout(timer);
+                        resolve(asCookieArray(value));
+                    };
+                    const timer = setTimeout(() => finish([]), 3000);
+                    try {
+                        const result = GM_cookie.list(details, (cookies, error) => {
+                            if (error) d('GM_cookie.list 错误：', error);
+                            finish(cookies);
+                        });
+                        if (result && typeof result.then === 'function') {
+                            result.then(finish).catch(error => {
+                                d('GM_cookie.list Promise 错误：', error);
+                                finish([]);
+                            });
+                        } else if (result !== undefined) {
+                            finish(result);
+                        }
+                    } catch (error) {
+                        d('GM_cookie.list 调用失败：', error);
+                        finish([]);
+                    }
+                });
+            }
+            // 老式油猴兼容：GM_cookie('list', details, callback)
             if (typeof GM_cookie === 'function') {
                 return await new Promise(resolve => {
                     GM_cookie('list', details, (cookies, error) => {
                         if (error) d('GM_cookie list 错误：', error);
-                        resolve(cookies || []);
+                        resolve(asCookieArray(cookies));
                     });
                 });
             }
@@ -201,7 +236,7 @@
         if (!Array.isArray(cookies)) return '';
         const picked = new Map();
         cookies.forEach(cookie => {
-            if (!cookie || !cookie.name) return;
+            if (!cookie || !cookie.name || cookie.value === undefined || cookie.value === null) return;
             const domain = String(cookie.domain || '').toLowerCase();
             const score = domain.includes('steampowered.com') ? 2 : (domain.includes('steamcommunity.com') ? 1 : 0);
             const prev = picked.get(cookie.name);
@@ -216,13 +251,13 @@
         const all = [];
         for (const target of STEAM_COOKIE_TARGETS) {
             // 先读分区 Cookie（Chrome 第三方 Cookie 分区场景），再读普通 Cookie
-            let cookies = await listCookies({ url: target.url, partitionKey: target.partitionKey });
-            if (!cookies.length) cookies = await listCookies({ url: target.url });
+            let cookies = asCookieArray(await listCookies({ url: target.url, partitionKey: target.partitionKey }));
+            if (!cookies.length) cookies = asCookieArray(await listCookies({ url: target.url }));
             if (!cookies.length && typeof GM_cookie === 'function') {
                 // TM 5.2+：空 partitionKey 表示读取所有分区，后面按 name 去重
-                cookies = await listCookies({ url: target.url, partitionKey: {} });
+                cookies = asCookieArray(await listCookies({ url: target.url, partitionKey: {} }));
             }
-            all.push(...cookies);
+            if (cookies.length) all.push(...cookies);
         }
         const header = cookieHeaderFrom(all);
         d('Steam Cookie 读取结果：', header
