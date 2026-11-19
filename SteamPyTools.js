@@ -2,7 +2,7 @@
 // @name            SteamPyTools
 // @name:zh-CN      SteamPyTools
 // @name:en         SteamPyTools
-// @version         2.3
+// @version         2.4
 // @description     SteamPyTools 增强脚本：CDKey 市场按价格/好评/已拥有游戏筛选，游戏卡片显示 Steam 好评等级与评价数，支持鼠标中键直达 Steam 商店；卖家页显示历史最低价、在售排名与最低价提示，并新增按库存数量排序；支持手动同步 Steam 已拥有/愿望单数据，多地区接口适配与本地缓存。
 // @description:en  SteamPyTools enhances SteamPy: filter CDKey listings by price, rating and owned games; show Steam review tiers and counts on game cards; open Steam store with middle click; seller page gets historical low price, sale rank, lowest-price hints and stock sorting; manual Steam library/wishlist sync with multi-region support and local caching.
 // @author          TieZhuKot
@@ -1136,7 +1136,7 @@ try {
     // 固定引用脚本自带的 jQuery，避免站点后续覆盖全局 $ / jQuery
     const $sp = window.jQuery;
     const DEBUG = true;
-    const VERSION = '2.3';
+    const VERSION = '2.4';
 
     const GM_KEY_STEAM_GAMES = 'steamGameList';
     const GM_KEY_FILTER_STATE = 'steamPriceFilterState';
@@ -1666,7 +1666,7 @@ try {
         return null;
     }
 
-    // ===== Steam 商店评价数据源（新版站点不再返回评分，改用 Steam appreviews API） =====
+    // ===== Steam 商店评价数据源（appreviews API 会跳转到商店首页，改解析商店页评价摘要） =====
     const ReviewStore = {
         cache: readJSON(GM_KEY_STEAM_RATING, {}),
         queue: [],
@@ -1697,21 +1697,26 @@ try {
         level(data) {
             const total = Number(data.totalReviews) || 0;
             const positive = Number(data.totalPositive) || 0;
-            if (!total) return null;
-            const ratio = positive / total;
-            if (total >= 500 && ratio >= 0.95) return { text: '好评如潮', cls: 'overwhelmingly-positive', ratio, total };
-            if (ratio >= 0.80) return { text: '特别好评', cls: 'very-positive', ratio, total };
-            if (ratio >= 0.70) return { text: '多半好评', cls: 'positive', ratio, total };
-            if (ratio >= 0.40) return { text: '褒贬不一', cls: 'mixed', ratio, total };
-            if (ratio >= 0.20) return { text: '多半差评', cls: 'negative', ratio, total };
-            return { text: '特别差评', cls: 'very-negative', ratio, total };
+            if (!total || total < 0) return null;
+            // 商店页 tooltip 给出精确百分比，优先使用；老缓存回退到 positive/total
+            const ratio = Number(data.ratio) > 0 ? Number(data.ratio) : (positive / total);
+            let text, cls;
+            if (total >= 500 && ratio >= 0.95) { text = '好评如潮'; cls = 'overwhelmingly-positive'; }
+            else if (ratio >= 0.80) { text = '特别好评'; cls = 'very-positive'; }
+            else if (ratio >= 0.70) { text = '多半好评'; cls = 'positive'; }
+            else if (ratio >= 0.40) { text = '褒贬不一'; cls = 'mixed'; }
+            else if (ratio >= 0.20) { text = '多半差评'; cls = 'negative'; }
+            else { text = '特别差评'; cls = 'very-negative'; }
+            // Steam 官方摘要文本更准确（例如评测数较少时仍显示"特别好评"）
+            if (data.scoreDesc) text = String(data.scoreDesc).trim();
+            return { text: text, cls: cls, ratio: ratio, total: total };
         },
 
         // 拉取单个 AppID 的评分，返回 Promise<data|null>
         fetch(appId) {
             appId = Number(appId);
             const cached = this.get(appId);
-            if (cached) return Promise.resolve(cached);
+            if (cached) return Promise.resolve(cached.noReviews ? null : cached);
             if (this.waiting.has(appId)) return this.waiting.get(appId);
 
             const promise = new Promise(resolve => {
@@ -1728,7 +1733,8 @@ try {
                 this.active++;
                 this.requestSteam(task.appId)
                     .then(data => {
-                        if (data) this.set(task.appId, data);
+                        // 无评价也缓存，避免 DOM 定时扫描反复请求同一游戏
+                        this.set(task.appId, data || { noReviews: true });
                         task.resolve(data || null);
                     })
                     .catch(error => {
@@ -1744,31 +1750,40 @@ try {
         },
 
         requestSteam(appId) {
-            const url = `https://store.steampowered.com/appreviews/${appId}?json=1&language=all&purchase_type=all&num_per_page=0&l=schinese`;
+            // appreviews?json=1 在当前环境会 302 回商店首页并返回 HTML，改用商店页评价摘要
+            const url = `https://store.steampowered.com/app/${appId}/?l=schinese`;
             return new Promise((resolve, reject) => {
                 GM_xmlhttpRequest({
                     method: 'GET',
                     url: url,
-                    timeout: 12000,
+                    timeout: 15000,
                     anonymous: true,
-                    headers: { 'Accept': 'application/json' },
+                    headers: { 'Accept': 'text/html' },
                     onload: res => {
                         try {
                             if (res.status < 200 || res.status >= 300) {
                                 reject(new Error('HTTP ' + res.status));
                                 return;
                             }
-                            const json = JSON.parse(res.responseText);
-                            const summary = json && json.query_summary;
-                            if (!summary) {
+                            const html = res.responseText || '';
+                            // 中文商店页：data-tooltip-html="此游戏的 27 篇用户评测中有 70% 为好评。"
+                            const tip = html.match(/data-tooltip-html=["'][^"']*?(\d+)\s*篇用户评测中有\s*(\d+)%\s*为好评/i);
+                            // 英文兜底：Of the 27 user reviews for this game, 70% are positive
+                            const tipEn = html.match(/Of the (\d+) user reviews[^,]{0,80},\s*(\d+)%\s*are positive/i);
+                            const metaCount = html.match(/<meta\s+itemprop=["']reviewCount["']\s+content=["'](\d+)["']/i);
+                            const metaRating = html.match(/<meta\s+itemprop=["']ratingValue["']\s+content=["']([\d.]+)["']/i);
+                            const desc = html.match(/class=["']game_review_summary[^"']*["'][^>]*>\s*([^<]+?)\s*<\/span>/i);
+                            let total = tip ? Number(tip[1]) : (tipEn ? Number(tipEn[1]) : (metaCount ? Number(metaCount[1]) : 0));
+                            let ratio = tip ? Number(tip[2]) / 100 : (tipEn ? Number(tipEn[2]) / 100 : (metaRating ? Number(metaRating[1]) / 10 : 0));
+                            if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(ratio) || ratio <= 0) {
                                 resolve(null);
                                 return;
                             }
                             resolve({
-                                totalPositive: summary.total_positive,
-                                totalNegative: summary.total_negative,
-                                totalReviews: summary.total_reviews,
-                                scoreDesc: summary.review_score_desc
+                                totalReviews: total,
+                                totalPositive: Math.round(total * ratio),
+                                ratio: ratio,
+                                scoreDesc: desc ? desc[1].trim() : ''
                             });
                         } catch (e) {
                             reject(e);
@@ -1787,30 +1802,37 @@ try {
         ratingMap: new Map(),
 
         setGameData(data) {
+            const content = data && data.result && data.result.content;
+            if (!Array.isArray(content)) {
+                d('keyHot 未找到 result.content 数组, result 结构=',
+                    data && data.result ? Object.keys(data.result) : String(data));
+                return;
+            }
+            if (!content.length) {
+                // prkGame/keyHot 有时返回空列表（页面同时还在请求 steamGame/keyHot），不要清空已有索引
+                d('keyHot 空结果，保留已有索引(现有=', this.ratingMap.size, ')');
+                return;
+            }
             this.steamGameData = data;
             const map = new Map();
             const byId = new Map();
-            const content = data && data.result && data.result.content;
-            if (Array.isArray(content)) {
-                content.forEach(game => {
-                    // 同时按 appId 和长 id 建索引，兼容卡片不同取值方式
-                    const appId = Number(game && game.appId);
-                    const longId = game && game.id;
-                    if (Number.isFinite(appId) && appId > 0) map.set(appId, game);
-                    if (longId !== undefined && longId !== null) byId.set(String(longId), game);
-                });
-                if (DEBUG && content.length) {
-                    const sample = content[0] || {};
-                    d('keyHot 首条: appId=', sample.appId, 'id=', sample.id,
-                        'rating=', sample.rating, 'steamApp=', sample.steamApp,
-                        'gameUrl=', sample.gameUrl);
-                    d('keyHot rating 分布(前10):',
-                        content.slice(0, 10).map(g => ({ appId: g.appId, rating: g.rating })));
-                    d('keyHot 索引(appId):', map.size, '/ byId:', byId.size, '/ 数据:', content.length);
-                }
-            } else {
-                d('keyHot 未找到 result.content 数组, result 结构=',
-                    data && data.result ? Object.keys(data.result) : String(data));
+            content.forEach(game => {
+                // 同时按 appId 和长 id 建索引，兼容卡片不同取值方式
+                const appId = Number(game && game.appId);
+                const longId = game && game.id;
+                if (Number.isFinite(appId) && appId > 0) map.set(appId, game);
+                if (longId !== undefined && longId !== null) byId.set(String(longId), game);
+            });
+            if (DEBUG) {
+                const sample = content[0] || {};
+                d('keyHot 首条: appId=', sample.appId, 'id=', sample.id,
+                    'rating=', sample.rating, 'steamApp=', sample.steamApp,
+                    'gameUrl=', sample.gameUrl);
+                d('keyHot rating 非零条数=', content.filter(g => Number(g && g.rating) > 0).length,
+                    '/ 总数=', content.length);
+                d('keyHot rating 分布(前10):',
+                    content.slice(0, 10).map(g => ({ appId: g.appId, rating: g.rating })));
+                d('keyHot 索引(appId):', map.size, '/ byId:', byId.size, '/ 数据:', content.length);
             }
             this.ratingMap = map;
             this.idMap = byId;
@@ -1943,6 +1965,10 @@ try {
         // 优先2：Steam 评价缓存（本地持久化）
         const cached = ReviewStore.get(appId);
         if (cached) {
+            if (cached.noReviews) {
+                renderRatingBadge(gameBlock, null);
+                return;
+            }
             const level = ReviewStore.level(cached);
             if (level) {
                 renderRatingBadge(gameBlock, level);
@@ -1952,7 +1978,7 @@ try {
 
         // 都没有：异步从 Steam 商店拉评价后再渲染（缓存 + 去重 + 并发限制）
         renderRatingBadge(gameBlock, null);
-        if (false) ReviewStore.fetch(appId).then(data => {
+        ReviewStore.fetch(appId).then(data => {
             if (!data) return;
             const level = ReviewStore.level(data);
             if (!level) return;
