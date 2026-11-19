@@ -2,7 +2,7 @@
 // @name            SteamPyTools
 // @name:zh-CN      SteamPyTools
 // @name:en         SteamPyTools
-// @version         2.4
+// @version         2.5
 // @description     SteamPyTools 增强脚本：CDKey 市场按价格/好评/已拥有游戏筛选，游戏卡片显示 Steam 好评等级与评价数，支持鼠标中键直达 Steam 商店；卖家页显示历史最低价、在售排名与最低价提示，并新增按库存数量排序；支持手动同步 Steam 已拥有/愿望单数据，多地区接口适配与本地缓存。
 // @description:en  SteamPyTools enhances SteamPy: filter CDKey listings by price, rating and owned games; show Steam review tiers and counts on game cards; open Steam store with middle click; seller page gets historical low price, sale rank, lowest-price hints and stock sorting; manual Steam library/wishlist sync with multi-region support and local caching.
 // @author          TieZhuKot
@@ -1136,7 +1136,7 @@ try {
     // 固定引用脚本自带的 jQuery，避免站点后续覆盖全局 $ / jQuery
     const $sp = window.jQuery;
     const DEBUG = true;
-    const VERSION = '2.4';
+    const VERSION = '2.5';
 
     const GM_KEY_STEAM_GAMES = 'steamGameList';
     const GM_KEY_FILTER_STATE = 'steamPriceFilterState';
@@ -1509,6 +1509,13 @@ try {
     }
 
     GM_registerMenuCommand('同步Steam数据', () => { syncSteamOwnGameData(); });
+    GM_registerMenuCommand('刷新Steam评价缓存', () => {
+        ReviewStore.cache = {};
+        writeJSON(GM_KEY_STEAM_RATING, {});
+        d('Steam 评价缓存已清空，重新扫描卡片');
+        scanGameBlocks();
+        notify('Steam 评价缓存已清空，正在重新获取');
+    });
 
     function defaultFilterState() {
         return {
@@ -1734,6 +1741,7 @@ try {
                 this.requestSteam(task.appId)
                     .then(data => {
                         // 无评价也缓存，避免 DOM 定时扫描反复请求同一游戏
+                        if (!data) d('Steam 无评价: appId=', task.appId);
                         this.set(task.appId, data || { noReviews: true });
                         task.resolve(data || null);
                     })
@@ -2293,14 +2301,24 @@ try {
     let removeContentHook = null;
     let cardObserver = null;
     let cardScanTimer = null;
+    let lastCardScanSignature = '';
 
     // 扫描所有游戏卡片，渲染评分角标与愿望单高亮（不依赖 Vue 实例，兼容 Vue2/Vue3）
     function scanGameBlocks(root) {
         const scope = root && root.querySelectorAll ? root : document;
-        scope.querySelectorAll('.gameblock').forEach(block => {
+        const blocks = scope.querySelectorAll('.gameblock');
+        blocks.forEach(block => {
             updateGameRating(block);
             processGameOpen(block);
         });
+        if (DEBUG) {
+            const withBadge = scope.querySelectorAll('.gameblock .gameRating').length;
+            const signature = scope === document ? 'doc:' + blocks.length + '/' + withBadge : 'root:' + blocks.length + '/' + withBadge;
+            if (signature !== lastCardScanSignature) {
+                lastCardScanSignature = signature;
+                d('卡片扫描: 总数=', blocks.length, '有角标=', withBadge, '范围=', scope === document ? 'document' : 'root');
+            }
+        }
     }
 
     function startCardObserver() {
@@ -2599,7 +2617,7 @@ try {
         });
         if (typeof window.__spShowBadge === 'function') {
             window.__spShowBadge(
-                'SteamPy v2.3 | ' + (isTargetPath() ? '市场页' : isSellerCDKeyPath() ? '卖家页' : '其他页') +
+                'SteamPy v' + VERSION + ' | ' + (isTargetPath() ? '市场页' : isSellerCDKeyPath() ? '卖家页' : '其他页') +
                 ' | 筛选面板=' + (isInitialized ? '已就绪' : (isTargetPath() ? '等待中' : '不适用')),
                 isInitialized || isSellerInitialized ? '#388e3c' : '#f57c00'
             );
