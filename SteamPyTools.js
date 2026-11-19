@@ -2,7 +2,7 @@
 // @name            SteamPyTools
 // @name:zh-CN      SteamPyTools
 // @name:en         SteamPyTools
-// @version         2.8
+// @version         2.9
 // @description     SteamPyTools 增强脚本：CDKey 市场按价格/好评/已拥有游戏筛选，游戏卡片显示 Steam 好评等级与评价数，支持鼠标中键直达 Steam 商店；卖家页显示历史最低价、在售排名与最低价提示，并新增按库存数量排序；支持手动同步 Steam 已拥有/愿望单数据，多地区接口适配与本地缓存。
 // @description:en  SteamPyTools enhances SteamPy: filter CDKey listings by price, rating and owned games; show Steam review tiers and counts on game cards; open Steam store with middle click; seller page gets historical low price, sale rank, lowest-price hints and stock sorting; manual Steam library/wishlist sync with multi-region support and local caching.
 // @author          TieZhuKot
@@ -1136,7 +1136,7 @@ try {
     // 固定引用脚本自带的 jQuery，避免站点后续覆盖全局 $ / jQuery
     const $sp = window.jQuery;
     const DEBUG = true;
-    const VERSION = '2.8';
+    const VERSION = '2.9';
 
     const GM_KEY_STEAM_GAMES = 'steamGameList';
     const GM_KEY_FILTER_STATE = 'steamPriceFilterState';
@@ -2078,27 +2078,29 @@ try {
             display: inline-flex;
             align-items: center;
             font-family: Arial, sans-serif;
-            font-size: .13rem;
-            gap: .08rem;
-            padding: .08rem;
-            border-radius: .04rem;
-            height: .25rem;
+            font-size: .11rem;
+            gap: .04rem;
+            padding: .04rem;
+            margin-left: .06rem !important;
+            border-radius: .03rem;
+            height: .2rem;
             box-sizing: border-box;
         }
         .sp-filter-btn {
             display: inline-flex;
             align-items: center;
-            padding: .04rem .1rem;
-            border-radius: .04rem;
+            padding: .02rem .05rem;
+            border-radius: .03rem;
             cursor: pointer;
-            font-size: .13rem;
+            font-size: .11rem;
             border: 1px solid #ddd;
             color: #666;
             background: transparent;
             transition: all .2s;
             box-sizing: border-box;
-            height: .25rem;
-            line-height: .17rem;
+            height: .18rem;
+            line-height: .14rem;
+            white-space: nowrap;
         }
         .sp-filter-btn.is-active {
             border: 1px solid #409EFF !important;
@@ -2106,26 +2108,27 @@ try {
             background: #409EFF !important;
         }
         .sp-filter-input {
-            width: .7rem;
-            height: .28rem;
-            padding: 0 .08rem;
+            width: .34rem;
+            height: .2rem;
+            padding: 0 .03rem;
             border: 1px solid #ccc;
-            border-radius: .04rem;
+            border-radius: .03rem;
             box-sizing: border-box;
-            font-size: .13rem;
-            line-height: .12rem;
+            font-size: .11rem;
+            line-height: .14rem;
+            text-align: center;
         }
         .sp-filter-button {
-            margin-left: .04rem;
-            padding: .04rem .12rem;
+            margin-left: .02rem;
+            padding: .02rem .06rem;
             cursor: pointer;
             background: #409EFF !important;
             color: #fff !important;
             border: 1px solid #409EFF !important;
-            border-radius: .04rem;
-            font-size: .13rem;
-            height: .28rem;
-            line-height: .2rem;
+            border-radius: .03rem;
+            font-size: .11rem;
+            height: .2rem;
+            line-height: .14rem;
             box-sizing: border-box;
         }
         `;
@@ -2135,19 +2138,20 @@ try {
     function createFilterUI() {
         const ui = document.createElement('div');
         ui.id = 'priceFilterContainer';
-        ui.className = 'ml-5-rem flex-row align-items-center sp-filter-group';
+        ui.className = 'flex-row align-items-center sp-filter-group';
 
         const title = document.createElement('span');
-        title.className = 'tag-titleOne ml-3-rem';
-        title.textContent = '价格筛选';
+        title.className = 'tag-titleOne';
+        title.textContent = '价格';
+        title.title = '价格筛选';
         title.style.fontWeight = 'bold';
         ui.appendChild(title);
 
         const presetContainer = document.createElement('div');
-        presetContainer.className = 'flex-row jc-space-flex-start align-items-center pr5-rem';
-        presetContainer.style.gap = '.08rem';
+        presetContainer.className = 'flex-row jc-space-flex-start align-items-center';
+        presetContainer.style.gap = '.04rem';
 
-        const presets = [{ text: '0-20元', min: 0, max: 20 }];
+        const presets = [{ text: '0-20', min: 0, max: 20 }];
         presets.forEach(p => {
             const btn = document.createElement('div');
             btn.className = 'tagBtn sp-filter-btn';
@@ -2169,13 +2173,15 @@ try {
 
         const inputContainer = document.createElement('div');
         inputContainer.className = 'flex-row align-items-center';
-        inputContainer.style.gap = '.08rem';
+        inputContainer.style.gap = '.02rem';
 
         const minInp = document.createElement('input');
         minInp.id = 'priceFilterMin';
         minInp.type = 'number';
-        minInp.placeholder = '最低价';
+        minInp.placeholder = '低';
+        minInp.title = '最低价';
         minInp.min = 0;
+        minInp.maxLength = 3;
         minInp.className = 'sp-filter-input';
         minInp.addEventListener('input', e => {
             filterState.minPrice = toNumber(e.target.value, 0);
@@ -2188,8 +2194,10 @@ try {
         const maxInp = document.createElement('input');
         maxInp.id = 'priceFilterMax';
         maxInp.type = 'number';
-        maxInp.placeholder = '最高价';
+        maxInp.placeholder = '高';
+        maxInp.title = '最高价';
         maxInp.min = 0;
+        maxInp.maxLength = 3;
         maxInp.className = 'sp-filter-input';
         maxInp.addEventListener('input', e => {
             filterState.maxPrice = toNumber(e.target.value, 9999);
@@ -2209,18 +2217,19 @@ try {
         ui.appendChild(inputContainer);
 
         const ratingFilterContainer = document.createElement('div');
-        ratingFilterContainer.className = 'ml-5-rem flex-row align-items-center sp-filter-group';
+        ratingFilterContainer.className = 'flex-row align-items-center sp-filter-group';
 
         const ratingTitle = document.createElement('span');
-        ratingTitle.className = 'tag-titleOne ml-3-rem';
-        ratingTitle.textContent = '好评筛选';
+        ratingTitle.className = 'tag-titleOne';
+        ratingTitle.textContent = '好评';
+        ratingTitle.title = '好评筛选';
         ratingTitle.style.fontWeight = 'bold';
         ratingFilterContainer.appendChild(ratingTitle);
 
         const ratingPresets = [
             { text: '全部', min: 0 },
-            { text: '特好以上', min: 0.8 },
-            { text: '好评如潮', min: 0.9 }
+            { text: '特好+', min: 0.8 },
+            { text: '如潮', min: 0.9 }
         ];
 
         ratingPresets.forEach(p => {
@@ -2243,8 +2252,8 @@ try {
         const ownedToggle = document.createElement('div');
         ownedToggle.id = 'spHideOwnedBtn';
         ownedToggle.className = 'tagBtn sp-filter-btn';
-        ownedToggle.textContent = '隐藏已拥有';
-        ownedToggle.title = '开启后隐藏 Steam 已拥有的游戏（状态会保存）';
+        ownedToggle.textContent = '隐已拥有';
+        ownedToggle.title = '隐藏已拥有游戏（状态会保存）';
         ownedToggle.onclick = () => {
             filterState.hideOwned = !filterState.hideOwned;
             StateManager.saveState(filterState);
