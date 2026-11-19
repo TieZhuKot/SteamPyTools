@@ -2,7 +2,7 @@
 // @name            SteamPyTools
 // @name:zh-CN      SteamPyTools
 // @name:en         SteamPyTools
-// @version         2.0
+// @version         2.1
 // @description     SteamPyTools 增强脚本：CDKey 市场按价格/好评/已拥有游戏筛选，游戏卡片显示 Steam 好评等级与评价数，支持鼠标中键直达 Steam 商店；卖家页显示历史最低价、在售排名与最低价提示，并新增按库存数量排序；支持手动同步 Steam 已拥有/愿望单数据，多地区接口适配与本地缓存。
 // @description:en  SteamPyTools enhances SteamPy: filter CDKey listings by price, rating and owned games; show Steam review tiers and counts on game cards; open Steam store with middle click; seller page gets historical low price, sale rank, lowest-price hints and stock sorting; manual Steam library/wishlist sync with multi-region support and local caching.
 // @author          TieZhuKot
@@ -51,10 +51,10 @@
         }
     }
     window.__spShowBadge = spShowBadge;
-    spShowBadge('SteamPy 文件已加载 v2.0');
+    spShowBadge('SteamPy 文件已加载 v2.1');
     if (!document.body) {
         document.addEventListener('DOMContentLoaded', function () {
-            spShowBadge('SteamPy 文件已加载 v2.0');
+            spShowBadge('SteamPy 文件已加载 v2.1');
         });
     }
 
@@ -1136,16 +1136,20 @@ try {
     // 固定引用脚本自带的 jQuery，避免站点后续覆盖全局 $ / jQuery
     const $sp = window.jQuery;
     const DEBUG = true;
-    const VERSION = '2.0';
+    const VERSION = '2.1';
 
     const GM_KEY_STEAM_GAMES = 'steamGameList';
     const GM_KEY_FILTER_STATE = 'steamPriceFilterState';
     const SALE_CACHE_TTL = 12 * 60 * 60 * 1000;
     const SALE_CACHE_MAX = 200;
     const SORT_EVENT_NS = '.steamPySort';
+    const GM_KEY_STEAM_RATING = 'steamReviewCache';
+    const RATING_CACHE_TTL = 24 * 60 * 60 * 1000;
+    const RATING_CONCURRENCY = 4;
 
-    const KEYHOT_PATH_RE = /\/xboot\/(?:steamApp|steamGame|(?:ru|us|tl|ars)SteamGame)\/keyHot(?:[/?]|$)/;
-    const GETONE_PATH_RE = /\/xboot\/(?:steamApp|steamGame|(?:ru|us|tl|ars)SteamGame)\/getOne(?:[/?]|$)/;
+    // 旧版 keyHot/getOne + 新版 prkGame/keyHot（新版国区 CDKey 市场）
+    const KEYHOT_PATH_RE = /\/xboot\/(?:steamApp|steamGame|prkGame|(?:ru|us|tl|ars)SteamGame)\/keyHot(?:[/?]|$)/;
+    const GETONE_PATH_RE = /\/xboot\/(?:steamApp|steamGame|prkGame|(?:ru|us|tl|ars)SteamGame)\/getOne(?:[/?]|$)/;
 
     // 用 console.log 而不是 console.debug：Chrome/夸克控制台默认会隐藏 debug 级别，导致诊断日志看不到
     function d(...args) {
@@ -1173,7 +1177,7 @@ try {
     });
     console.info('[SteamPy++] 菜单命令注册: 同步Steam数据');
     if (typeof window.__spShowBadge === 'function') {
-        window.__spShowBadge('SteamPy 主逻辑已执行 v2.0', '#388e3c');
+        window.__spShowBadge('SteamPy 主逻辑已执行 v2.1', '#388e3c');
     }
 
     function isScriptCat() {
@@ -1662,6 +1666,121 @@ try {
         return null;
     }
 
+    // ===== Steam 商店评价数据源（新版站点不再返回评分，改用 Steam appreviews API） =====
+    const ReviewStore = {
+        cache: readJSON(GM_KEY_STEAM_RATING, {}),
+        queue: [],
+        active: 0,
+        waiting: new Map(),
+
+        save() {
+            const now = Date.now();
+            Object.keys(this.cache).forEach(k => {
+                if (now - (this.cache[k].time || 0) > RATING_CACHE_TTL) delete this.cache[k];
+            });
+            writeJSON(GM_KEY_STEAM_RATING, this.cache);
+        },
+
+        get(appId) {
+            const item = this.cache[Number(appId)];
+            if (!item) return null;
+            if (Date.now() - (item.time || 0) > RATING_CACHE_TTL) return null;
+            return item;
+        },
+
+        set(appId, data) {
+            this.cache[Number(appId)] = Object.assign({ time: Date.now() }, data);
+            this.save();
+        },
+
+        // 好评率 -> 等级文本 + class
+        level(data) {
+            const total = Number(data.totalReviews) || 0;
+            const positive = Number(data.totalPositive) || 0;
+            if (!total) return null;
+            const ratio = positive / total;
+            if (total >= 500 && ratio >= 0.95) return { text: '好评如潮', cls: 'overwhelmingly-positive', ratio, total };
+            if (ratio >= 0.80) return { text: '特别好评', cls: 'very-positive', ratio, total };
+            if (ratio >= 0.70) return { text: '多半好评', cls: 'positive', ratio, total };
+            if (ratio >= 0.40) return { text: '褒贬不一', cls: 'mixed', ratio, total };
+            if (ratio >= 0.20) return { text: '多半差评', cls: 'negative', ratio, total };
+            return { text: '特别差评', cls: 'very-negative', ratio, total };
+        },
+
+        // 拉取单个 AppID 的评分，返回 Promise<data|null>
+        fetch(appId) {
+            appId = Number(appId);
+            const cached = this.get(appId);
+            if (cached) return Promise.resolve(cached);
+            if (this.waiting.has(appId)) return this.waiting.get(appId);
+
+            const promise = new Promise(resolve => {
+                this.queue.push({ appId, resolve });
+                this.pump();
+            });
+            this.waiting.set(appId, promise);
+            return promise;
+        },
+
+        pump() {
+            while (this.active < RATING_CONCURRENCY && this.queue.length) {
+                const task = this.queue.shift();
+                this.active++;
+                this.requestSteam(task.appId)
+                    .then(data => {
+                        if (data) this.set(task.appId, data);
+                        task.resolve(data || null);
+                    })
+                    .catch(error => {
+                        d('Steam 评价请求失败:', task.appId, error && error.message);
+                        task.resolve(null);
+                    })
+                    .finally(() => {
+                        this.active--;
+                        this.waiting.delete(task.appId);
+                        this.pump();
+                    });
+            }
+        },
+
+        requestSteam(appId) {
+            const url = `https://store.steampowered.com/appreviews/${appId}?json=1&language=all&purchase_type=all&num_per_page=0&l=schinese`;
+            return new Promise((resolve, reject) => {
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url: url,
+                    timeout: 12000,
+                    anonymous: true,
+                    headers: { 'Accept': 'application/json' },
+                    onload: res => {
+                        try {
+                            if (res.status < 200 || res.status >= 300) {
+                                reject(new Error('HTTP ' + res.status));
+                                return;
+                            }
+                            const json = JSON.parse(res.responseText);
+                            const summary = json && json.query_summary;
+                            if (!summary) {
+                                resolve(null);
+                                return;
+                            }
+                            resolve({
+                                totalPositive: summary.total_positive,
+                                totalNegative: summary.total_negative,
+                                totalReviews: summary.total_reviews,
+                                scoreDesc: summary.review_score_desc
+                            });
+                        } catch (e) {
+                            reject(e);
+                        }
+                    },
+                    onerror: err => reject(err || new Error('网络错误')),
+                    ontimeout: () => reject(new Error('超时'))
+                });
+            });
+        }
+    };
+
     // 游戏数据存储：setGameData 时建索引，避免每次线性 find
     const TempDataStore = {
         steamGameData: null,
@@ -1756,6 +1875,49 @@ try {
         return request;
     });
 
+    // 把评分等级渲染到卡片上；level 形如 {text, cls, ratio, total}，null 表示无评分
+    function renderRatingBadge(gameBlock, level) {
+        const gameHead = gameBlock.querySelector('.gameHead') ||
+            gameBlock.querySelector('.game-header') ||
+            gameBlock.querySelector('.game-info') ||
+            gameBlock;
+        if (!gameHead) return;
+
+        let ratingEl = gameHead.querySelector('.gameRating');
+        if (level) {
+            const fullText = level.total > 0 ? `${level.text} (${level.total})` : level.text;
+            if (ratingEl) {
+                if (ratingEl.textContent !== fullText) ratingEl.textContent = fullText;
+                if (!ratingEl.classList.contains(level.cls)) {
+                    ratingEl.classList.remove(
+                        'overwhelmingly-positive', 'very-positive', 'positive',
+                        'mixed', 'negative', 'very-negative'
+                    );
+                    ratingEl.classList.add(level.cls);
+                }
+            } else {
+                ratingEl = document.createElement('div');
+                ratingEl.className = `gameRating ${level.cls}`;
+                ratingEl.textContent = fullText;
+                gameHead.appendChild(ratingEl);
+            }
+        } else if (ratingEl) {
+            ratingEl.remove();
+        }
+    }
+
+    function ratingLevelFromRatio(ratio, count) {
+        const percent = Math.round((Number(ratio) || 0) * 100);
+        let text, cls;
+        if (percent >= 90) { text = '好评如潮'; cls = 'overwhelmingly-positive'; }
+        else if (percent >= 80) { text = '特别好评'; cls = 'very-positive'; }
+        else if (percent >= 70) { text = '多半好评'; cls = 'positive'; }
+        else if (percent >= 40) { text = '褒贬不一'; cls = 'mixed'; }
+        else if (percent >= 20) { text = '多半差评'; cls = 'negative'; }
+        else { text = '特别差评'; cls = 'very-negative'; }
+        return { text: text, cls: cls, ratio: ratio, total: count || 0 };
+    }
+
     function updateGameRating(gameBlock) {
         if (!gameBlock) return;
 
@@ -1767,62 +1929,37 @@ try {
             if (gameName) gameName.classList.add('bg-blue');
         }
 
-        const gameHead = gameBlock.querySelector('.gameHead') ||
-            gameBlock.querySelector('.game-header') ||
-            gameBlock.querySelector('.game-info') ||
-            gameBlock;
-
-        const rating = TempDataStore.getRatingByAppId(appId);
-        d('卡片评分检查: appId=', appId, 'rating=', rating,
-            '有数据=', Boolean(TempDataStore.getGameInfo(appId)));
-        let ratingEl = gameHead.querySelector('.gameRating');
-
-        if (rating > 0) {
-            const ratingPercent = Math.round(rating * 100);
-            let ratingText;
-            let ratingClass;
-
-            if (ratingPercent >= 90) {
-                ratingText = '好评如潮';
-                ratingClass = 'overwhelmingly-positive';
-            } else if (ratingPercent >= 80) {
-                ratingText = '特别好评';
-                ratingClass = 'very-positive';
-            } else if (ratingPercent >= 70) {
-                ratingText = '多半好评';
-                ratingClass = 'positive';
-            } else if (ratingPercent >= 40) {
-                ratingText = '褒贬不一';
-                ratingClass = 'mixed';
-            } else if (ratingPercent >= 20) {
-                ratingText = '多半差评';
-                ratingClass = 'negative';
-            } else {
-                ratingText = '特别差评';
-                ratingClass = 'very-negative';
-            }
-
-            const ratingCount = TempDataStore.getRatingCountByAppId(appId);
-            const fullRatingText = ratingCount > 0 ? `${ratingText} (${ratingCount})` : ratingText;
-
-            if (ratingEl) {
-                if (ratingEl.textContent !== fullRatingText) ratingEl.textContent = fullRatingText;
-                if (!ratingEl.classList.contains(ratingClass)) {
-                    ratingEl.classList.remove(
-                        'overwhelmingly-positive', 'very-positive', 'positive',
-                        'mixed', 'negative', 'very-negative'
-                    );
-                    ratingEl.classList.add(ratingClass);
-                }
-            } else {
-                ratingEl = document.createElement('div');
-                ratingEl.className = `gameRating ${ratingClass}`;
-                ratingEl.textContent = fullRatingText;
-                gameHead.appendChild(ratingEl);
-            }
-        } else if (ratingEl) {
-            ratingEl.remove();
+        // 优先1：站点接口自带的评分字段（老版可能存在）
+        const siteRating = TempDataStore.getRatingByAppId(appId);
+        if (siteRating > 0) {
+            renderRatingBadge(gameBlock, ratingLevelFromRatio(siteRating, TempDataStore.getRatingCountByAppId(appId)));
+            return;
         }
+
+        // 优先2：Steam 评价缓存（本地持久化）
+        const cached = ReviewStore.get(appId);
+        if (cached) {
+            const level = ReviewStore.level(cached);
+            if (level) {
+                renderRatingBadge(gameBlock, level);
+                return;
+            }
+        }
+
+        // 都没有：异步从 Steam 商店拉评价后再渲染（缓存 + 去重 + 并发限制）
+        renderRatingBadge(gameBlock, null);
+        ReviewStore.fetch(appId).then(data => {
+            if (!data) return;
+            const level = ReviewStore.level(data);
+            if (!level) return;
+            // 卡片可能已被站点重建，用 data-sp-app-id 重新定位
+            document.querySelectorAll('.gameblock').forEach(block => {
+                if (Number(block.dataset.spAppId) === Number(appId)) {
+                    renderRatingBadge(block, level);
+                }
+            });
+            d('Steam 评价已渲染: appId=', appId, level.text, '总评价=', level.total);
+        });
     }
 
     function injectStyles() {
@@ -2339,13 +2476,14 @@ try {
         }
     }
 
-    const TARGET_PATH = '/cdKey/cdKey';
+    const TARGET_PATHS = ['/cdKey/cdKey', '/pro/cdKey/cdKeyCn'];
     const SELLER_CDKEY_PATH = '/pyUserInfo/sellerCDKey';
     let isInitialized = false;
     let isSellerInitialized = false;
 
     function isTargetPath() {
-        return window.location.pathname.startsWith(TARGET_PATH);
+        const path = window.location.pathname;
+        return TARGET_PATHS.some(p => path.startsWith(p));
     }
 
     function isSellerCDKeyPath() {
@@ -2387,7 +2525,7 @@ try {
         });
         if (typeof window.__spShowBadge === 'function') {
             window.__spShowBadge(
-                'SteamPy v2.0 | ' + (isTargetPath() ? '市场页' : isSellerCDKeyPath() ? '卖家页' : '其他页') +
+                'SteamPy v2.1 | ' + (isTargetPath() ? '市场页' : isSellerCDKeyPath() ? '卖家页' : '其他页') +
                 ' | 筛选面板=' + (isInitialized ? '已就绪' : (isTargetPath() ? '等待中' : '不适用')),
                 isInitialized || isSellerInitialized ? '#388e3c' : '#f57c00'
             );
