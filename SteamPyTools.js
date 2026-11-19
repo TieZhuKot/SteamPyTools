@@ -2,7 +2,7 @@
 // @name            SteamPyTools
 // @name:zh-CN      SteamPyTools
 // @name:en         SteamPyTools
-// @version         2.1
+// @version         2.2
 // @description     SteamPyTools 增强脚本：CDKey 市场按价格/好评/已拥有游戏筛选，游戏卡片显示 Steam 好评等级与评价数，支持鼠标中键直达 Steam 商店；卖家页显示历史最低价、在售排名与最低价提示，并新增按库存数量排序；支持手动同步 Steam 已拥有/愿望单数据，多地区接口适配与本地缓存。
 // @description:en  SteamPyTools enhances SteamPy: filter CDKey listings by price, rating and owned games; show Steam review tiers and counts on game cards; open Steam store with middle click; seller page gets historical low price, sale rank, lowest-price hints and stock sorting; manual Steam library/wishlist sync with multi-region support and local caching.
 // @author          TieZhuKot
@@ -27,7 +27,7 @@
 
 /* ===== bootstrap: 在任何依赖之前打点，便于判断脚本是否被加载 ===== */
 (function () {
-    console.info('[SteamPy++] ===== 文件已加载 =====', {
+    console.info('[SteamPyTools] ===== 文件已加载 =====', {
         readyState: document.readyState,
         href: location.href,
         at: Date.now()
@@ -47,14 +47,14 @@
             badge.textContent = text;
             badge.style.background = color || '#d32f2f';
         } catch (e) {
-            console.error('[SteamPy++] 徽章插入失败:', e);
+            console.error('[SteamPyTools] 徽章插入失败:', e);
         }
     }
     window.__spShowBadge = spShowBadge;
-    spShowBadge('SteamPy 文件已加载 v2.1');
+    spShowBadge('SteamPy 文件已加载 v2.2');
     if (!document.body) {
         document.addEventListener('DOMContentLoaded', function () {
-            spShowBadge('SteamPy 文件已加载 v2.1');
+            spShowBadge('SteamPy 文件已加载 v2.2');
         });
     }
 
@@ -62,7 +62,7 @@
         const stack = String((e.error && e.error.stack) || '');
         const filename = String(e.filename || '');
         if (stack.indexOf('SteamPy') >= 0 || filename.indexOf('userscript') >= 0 || filename.indexOf('SteamPyTools') >= 0) {
-            console.error('[SteamPy++] 捕获未处理异常:', e.message, stack || filename);
+            console.error('[SteamPyTools] 捕获未处理异常:', e.message, stack || filename);
         }
     });
 })();
@@ -572,7 +572,7 @@ var ajaxHooker = function() {
     };
 }();
 } catch (e) {
-    console.error('[SteamPy++] 依赖加载失败: ajaxHooker.js', e);
+    console.error('[SteamPyTools] 依赖加载失败: ajaxHooker.js', e);
 }
 
 /* ===== inlined dependency: ElementGetter.js ===== */
@@ -779,7 +779,7 @@ var elmGetter = function() {
     };
 }();
 } catch (e) {
-    console.error('[SteamPy++] 依赖加载失败: ElementGetter.js', e);
+    console.error('[SteamPyTools] 依赖加载失败: ElementGetter.js', e);
 }
 
 /* ===== inlined dependency: ajax.js ===== */
@@ -1101,7 +1101,7 @@ var ajax = function() {
     return ajax;
 }();
 } catch (e) {
-    console.error('[SteamPy++] 依赖加载失败: ajax.js', e);
+    console.error('[SteamPyTools] 依赖加载失败: ajax.js', e);
 }
 
 /* ===== inlined dependency: jquery.js ===== */
@@ -1126,7 +1126,7 @@ try {
 
 /*global elmGetter,ajaxHooker,ajax,jQuery,GM_cookie*/
 } catch (e) {
-    console.error('[SteamPy++] 依赖加载失败: jquery.js', e);
+    console.error('[SteamPyTools] 依赖加载失败: jquery.js', e);
 }
 
 
@@ -1136,7 +1136,7 @@ try {
     // 固定引用脚本自带的 jQuery，避免站点后续覆盖全局 $ / jQuery
     const $sp = window.jQuery;
     const DEBUG = true;
-    const VERSION = '2.1';
+    const VERSION = '2.2';
 
     const GM_KEY_STEAM_GAMES = 'steamGameList';
     const GM_KEY_FILTER_STATE = 'steamPriceFilterState';
@@ -1153,20 +1153,20 @@ try {
 
     // 用 console.log 而不是 console.debug：Chrome/夸克控制台默认会隐藏 debug 级别，导致诊断日志看不到
     function d(...args) {
-        if (DEBUG) console.log('[SteamPy++]', ...args);
+        if (DEBUG) console.log('[SteamPyTools]', ...args);
     }
 
     const scriptHandler = (typeof GM_info !== 'undefined' && GM_info && GM_info.scriptHandler) || 'unknown';
     const scriptVersion = (typeof GM_info !== 'undefined' && GM_info && GM_info.script && GM_info.script.version) || VERSION;
-    console.info('[SteamPy++] ===== 脚本启动 =====');
-    console.info('[SteamPy++] 版本:', scriptVersion, '| 文件内版本:', VERSION);
-    console.info('[SteamPy++] 环境:', {
+    console.info('[SteamPyTools] ===== 脚本启动 =====');
+    console.info('[SteamPyTools] 版本:', scriptVersion, '| 文件内版本:', VERSION);
+    console.info('[SteamPyTools] 环境:', {
         handler: scriptHandler,
         href: location.href,
         readyState: document.readyState,
         ua: navigator.userAgent
     });
-    console.info('[SteamPy++] 依赖:', {
+    console.info('[SteamPyTools] 依赖:', {
         jQuery: typeof jQuery,
         elmGetter: typeof elmGetter,
         ajaxHooker: typeof ajaxHooker,
@@ -1175,9 +1175,9 @@ try {
         GM_xmlhttpRequest: typeof GM_xmlhttpRequest,
         GM: typeof GM
     });
-    console.info('[SteamPy++] 菜单命令注册: 同步Steam数据');
+    console.info('[SteamPyTools] 菜单命令注册: 同步Steam数据');
     if (typeof window.__spShowBadge === 'function') {
-        window.__spShowBadge('SteamPy 主逻辑已执行 v2.1', '#388e3c');
+        window.__spShowBadge('SteamPy 主逻辑已执行 v2.2', '#388e3c');
     }
 
     function isScriptCat() {
@@ -1187,7 +1187,7 @@ try {
 
     function notify(text) {
         GM_notification({
-            title: 'SteamPy Plus',
+            title: 'SteamPyTools',
             text: text,
             timeout: 3000
         });
@@ -1502,7 +1502,7 @@ try {
             notify('同步Steam数据成功');
             return true;
         } catch (error) {
-            console.error('[SteamPy++] 同步Steam数据失败：', error);
+            console.error('[SteamPyTools] 同步Steam数据失败：', error);
             notify('同步Steam数据失败，请检查控制台');
             return false;
         }
@@ -1846,7 +1846,7 @@ try {
                         d('keyHot 首条游戏字段=', Object.keys(content[0] || {}));
                     }
                 } catch (e) {
-                    console.error('[SteamPy++] keyHot 接口数据处理失败：', e);
+                    console.error('[SteamPyTools] keyHot 接口数据处理失败：', e);
                 }
             };
         } else if (GETONE_PATH_RE.test(request.url)) {
@@ -1868,7 +1868,7 @@ try {
                         d('getOne 接口数据处理失败：', originalData);
                     }
                 } catch (e) {
-                    console.error('[SteamPy++] getOne 接口数据处理失败：', e);
+                    console.error('[SteamPyTools] getOne 接口数据处理失败：', e);
                 }
             };
         }
@@ -1963,11 +1963,11 @@ try {
     }
 
     function injectStyles() {
-        const existing = document.getElementById('steamPyPlusStyle');
+        const existing = document.getElementById('steamPyToolsStyle');
         if (existing) return;
 
         const style = document.createElement('style');
-        style.id = 'steamPyPlusStyle';
+        style.id = 'steamPyToolsStyle';
         style.textContent = `
         .gameHead .gameRating {
             padding: 0 8px !important;
@@ -2261,32 +2261,75 @@ try {
     }
 
     let removeContentHook = null;
+    let cardObserver = null;
+    let cardScanTimer = null;
+
+    // 扫描所有游戏卡片，渲染评分角标与愿望单高亮（不依赖 Vue 实例，兼容 Vue2/Vue3）
+    function scanGameBlocks(root) {
+        const scope = root && root.querySelectorAll ? root : document;
+        scope.querySelectorAll('.gameblock').forEach(block => {
+            updateGameRating(block);
+            processGameOpen(block);
+        });
+    }
+
+    function startCardObserver() {
+        if (cardObserver) return;
+        let scheduled = false;
+        const schedule = () => {
+            if (scheduled) return;
+            scheduled = true;
+            clearTimeout(cardScanTimer);
+            cardScanTimer = setTimeout(() => {
+                scheduled = false;
+                scanGameBlocks();
+            }, 300);
+        };
+        cardObserver = new MutationObserver(schedule);
+        cardObserver.observe(document.body || document.documentElement, { childList: true, subtree: true });
+        // 定时兜底：站点可能整块替换 DOM 而不触发我们关心的变化
+        cardScanTimer = setInterval(scanGameBlocks, 3000);
+        d('已启动卡片 DOM 监听（兼容 Vue3 新版）');
+    }
+
+    function stopCardObserver() {
+        if (cardObserver) {
+            cardObserver.disconnect();
+            cardObserver = null;
+        }
+        if (cardScanTimer) {
+            clearInterval(cardScanTimer);
+            clearTimeout(cardScanTimer);
+            cardScanTimer = null;
+        }
+    }
 
     async function startContentMonitor() {
         if (removeContentHook) return;
-        await waitForElement('div.ivu-tabs-content div.flex-row.jc-space-flex-start.flex-wrap.w-auto');
+        try {
+            await waitForElement('div.ivu-tabs-content div.flex-row.jc-space-flex-start.flex-wrap.w-auto');
+        } catch (e) {
+            d('旧版列表容器未找到，尝试新版容器');
+            await waitForElement('.game_layout, .gameblock');
+        }
         if (removeContentHook) return;
 
         const pane = $sp('.ivu-tabs-tabpane').get(0);
-        if (!pane || !pane.__vue__) {
-            console.warn('[SteamPy++] 未找到游戏列表 Vue 实例，评分与筛选未启用');
-            return;
+        const vm = pane && pane.__vue__;
+        if (vm) {
+            // 旧版 Vue2：通过 updated hook 做筛选 + 角标
+            removeContentHook = addUpdatedHook(pane, function () {
+                applyFilterGameList();
+                scanGameBlocks(this.$el);
+            }, 'content');
+            d('使用 Vue2 updated hook 模式');
+        } else {
+            // 新版 Vue3：没有 __vue__，改用 DOM 监听
+            console.info('[SteamPyTools] 未找到 Vue2 实例，使用 DOM 监听模式（Vue3 新版）');
         }
 
-        removeContentHook = addUpdatedHook(pane, function () {
-            applyFilterGameList();
-
-            const gameBlocks = this.$el ? this.$el.querySelectorAll('.gameblock') : [];
-            gameBlocks.forEach(gameBlock => {
-                updateGameRating(gameBlock);
-                processGameOpen(gameBlock);
-            });
-        }, 'content');
-
-        setTimeout(() => {
-            applyFilterGameList();
-            document.querySelectorAll('.gameblock').forEach(gameBlock => updateGameRating(gameBlock));
-        }, 600);
+        startCardObserver();
+        setTimeout(scanGameBlocks, 600);
     }
 
     let stopSellWatcher = null;
@@ -2300,7 +2343,7 @@ try {
             );
             const vm = el[0] && el[0].__vue__;
             if (!vm) {
-                console.warn('[SteamPy++] 未找到卖家列表 Vue 实例');
+                console.warn('[SteamPyTools] 未找到卖家列表 Vue 实例');
                 return;
             }
 
@@ -2352,7 +2395,7 @@ try {
                 });
             }, { immediate: true });
         } catch (error) {
-            console.error('[SteamPy++] 卖家列表监听启动失败：', error);
+            console.error('[SteamPyTools] 卖家列表监听启动失败：', error);
         }
     }
 
@@ -2388,7 +2431,7 @@ try {
             };
             d('seller 弹窗监听器已启动');
         } catch (error) {
-            console.error('[SteamPy++] 弹窗监听启动失败：', error);
+            console.error('[SteamPyTools] 弹窗监听启动失败：', error);
         }
     }
 
@@ -2472,7 +2515,7 @@ try {
             $targetBtns.last().after($quantityBtn);
             d('成功添加"数量"排序按钮');
         } catch (error) {
-            console.error('[SteamPy++] 添加"数量"排序按钮失败：', error);
+            console.error('[SteamPyTools] 添加"数量"排序按钮失败：', error);
         }
     }
 
@@ -2498,6 +2541,7 @@ try {
             removeContentHook();
             removeContentHook = null;
         }
+        stopCardObserver();
         const ui = document.getElementById('priceFilterContainer');
         if (ui) ui.remove();
         listStates = new WeakMap();
@@ -2525,21 +2569,21 @@ try {
         });
         if (typeof window.__spShowBadge === 'function') {
             window.__spShowBadge(
-                'SteamPy v2.1 | ' + (isTargetPath() ? '市场页' : isSellerCDKeyPath() ? '卖家页' : '其他页') +
+                'SteamPy v2.2 | ' + (isTargetPath() ? '市场页' : isSellerCDKeyPath() ? '卖家页' : '其他页') +
                 ' | 筛选面板=' + (isInitialized ? '已就绪' : (isTargetPath() ? '等待中' : '不适用')),
                 isInitialized || isSellerInitialized ? '#388e3c' : '#f57c00'
             );
         }
         if (isTargetPath() && !isInitialized) {
             d('run script in cdKey path');
-            buyInit().catch(error => console.error('[SteamPy++] buyInit 失败：', error));
+            buyInit().catch(error => console.error('[SteamPyTools] buyInit 失败：', error));
         } else if (!isTargetPath() && isInitialized) {
             cleanUp();
         }
 
         if (isSellerCDKeyPath() && !isSellerInitialized) {
             d('run script in sellerCDKey path');
-            sellerInit().catch(error => console.error('[SteamPy++] sellerInit 失败：', error));
+            sellerInit().catch(error => console.error('[SteamPyTools] sellerInit 失败：', error));
         } else if (!isSellerCDKeyPath() && isSellerInitialized) {
             sellerCleanUp();
         }
