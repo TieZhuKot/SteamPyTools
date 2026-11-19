@@ -2,7 +2,7 @@
 // @name            SteamPyTools
 // @name:zh-CN      SteamPyTools
 // @name:en         SteamPyTools
-// @version         1.6
+// @version         1.7
 // @description     SteamPyTools 增强脚本：CDKey 市场按价格/好评/已拥有游戏筛选，游戏卡片显示 Steam 好评等级与评价数，支持鼠标中键直达 Steam 商店；卖家页显示历史最低价、在售排名与最低价提示，并新增按库存数量排序；支持手动同步 Steam 已拥有/愿望单数据，多地区接口适配与本地缓存。
 // @description:en  SteamPyTools enhances SteamPy: filter CDKey listings by price, rating and owned games; show Steam review tiers and counts on game cards; open Steam store with middle click; seller page gets historical low price, sale rank, lowest-price hints and stock sorting; manual Steam library/wishlist sync with multi-region support and local caching.
 // @author          TieZhuKot
@@ -33,6 +33,30 @@
         at: Date.now()
     });
     window.__steamPyFileLoadedAt = Date.now();
+
+    // 页面右上角红色徽章：不用开控制台也能看出脚本到底有没有加载/执行到主逻辑
+    function spShowBadge(text, color) {
+        try {
+            let badge = document.getElementById('__spDiagBadge');
+            if (!badge) {
+                badge = document.createElement('div');
+                badge.id = '__spDiagBadge';
+                badge.style.cssText = 'position:fixed;top:0;right:0;z-index:2147483647;background:#d32f2f;color:#fff;font:14px/1.6 sans-serif;padding:4px 12px;box-shadow:0 2px 6px rgba(0,0,0,.3);pointer-events:none;';
+                (document.body || document.documentElement).appendChild(badge);
+            }
+            badge.textContent = text;
+            badge.style.background = color || '#d32f2f';
+        } catch (e) {
+            console.error('[SteamPy++] 徽章插入失败:', e);
+        }
+    }
+    window.__spShowBadge = spShowBadge;
+    spShowBadge('SteamPy 文件已加载 v1.7');
+    if (!document.body) {
+        document.addEventListener('DOMContentLoaded', function () {
+            spShowBadge('SteamPy 文件已加载 v1.7');
+        });
+    }
 
     window.addEventListener('error', function (e) {
         const stack = String((e.error && e.error.stack) || '');
@@ -1112,7 +1136,7 @@ try {
     // 固定引用脚本自带的 jQuery，避免站点后续覆盖全局 $ / jQuery
     const $sp = window.jQuery;
     const DEBUG = true;
-    const VERSION = '1.6';
+    const VERSION = '1.7';
 
     const GM_KEY_STEAM_GAMES = 'steamGameList';
     const GM_KEY_FILTER_STATE = 'steamPriceFilterState';
@@ -1147,6 +1171,9 @@ try {
         GM: typeof GM
     });
     console.info('[SteamPy++] 菜单命令注册: 同步Steam数据');
+    if (typeof window.__spShowBadge === 'function') {
+        window.__spShowBadge('SteamPy 主逻辑已执行 v1.7', '#388e3c');
+    }
 
     function isScriptCat() {
         const handler = (typeof GM_info !== 'undefined' && GM_info && GM_info.scriptHandler) || '';
@@ -1669,6 +1696,8 @@ try {
 
     // 接口拦截
     ajaxHooker.hook(request => {
+        // 所有 XHR 都打点：切分页若请求了接口，这里一定看得到
+        d('XHR:', request.method, request.url);
         if (KEYHOT_PATH_RE.test(request.url)) {
             d('ajaxHooker 捕获 keyHot:', request.url);
             request.response = res => {
