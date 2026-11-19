@@ -2,7 +2,7 @@
 // @name            SteamPyTools
 // @name:zh-CN      SteamPyTools
 // @name:en         SteamPyTools
-// @version         1.4
+// @version         1.5
 // @description     SteamPyTools 增强脚本：CDKey 市场按价格/好评/已拥有游戏筛选，游戏卡片显示 Steam 好评等级与评价数，支持鼠标中键直达 Steam 商店；卖家页显示历史最低价、在售排名与最低价提示，并新增按库存数量排序；支持手动同步 Steam 已拥有/愿望单数据，多地区接口适配与本地缓存。
 // @description:en  SteamPyTools enhances SteamPy: filter CDKey listings by price, rating and owned games; show Steam review tiers and counts on game cards; open Steam store with middle click; seller page gets historical low price, sale rank, lowest-price hints and stock sorting; manual Steam library/wishlist sync with multi-region support and local caching.
 // @author          TieZhuKot
@@ -1097,7 +1097,8 @@ var ajax = function() {
 
     // 固定引用脚本自带的 jQuery，避免站点后续覆盖全局 $ / jQuery
     const $sp = window.jQuery;
-    const DEBUG = false;
+    const DEBUG = true;
+    const VERSION = '1.5';
 
     const GM_KEY_STEAM_GAMES = 'steamGameList';
     const GM_KEY_FILTER_STATE = 'steamPriceFilterState';
@@ -1111,6 +1112,27 @@ var ajax = function() {
     function d(...args) {
         if (DEBUG) console.debug('[SteamPy++]', ...args);
     }
+
+    const scriptHandler = (typeof GM_info !== 'undefined' && GM_info && GM_info.scriptHandler) || 'unknown';
+    const scriptVersion = (typeof GM_info !== 'undefined' && GM_info && GM_info.script && GM_info.script.version) || VERSION;
+    console.info('[SteamPy++] ===== 脚本启动 =====');
+    console.info('[SteamPy++] 版本:', scriptVersion, '| 文件内版本:', VERSION);
+    console.info('[SteamPy++] 环境:', {
+        handler: scriptHandler,
+        href: location.href,
+        readyState: document.readyState,
+        ua: navigator.userAgent
+    });
+    console.info('[SteamPy++] 依赖:', {
+        jQuery: typeof jQuery,
+        elmGetter: typeof elmGetter,
+        ajaxHooker: typeof ajaxHooker,
+        ajax: typeof ajax,
+        GM_cookie: typeof GM_cookie,
+        GM_xmlhttpRequest: typeof GM_xmlhttpRequest,
+        GM: typeof GM
+    });
+    console.info('[SteamPy++] 菜单命令注册: 同步Steam数据');
 
     function isScriptCat() {
         const handler = (typeof GM_info !== 'undefined' && GM_info && GM_info.scriptHandler) || '';
@@ -1152,15 +1174,38 @@ var ajax = function() {
     }
 
     function waitForElement(selector, root, timeout = 10000) {
+        d('waitForElement 开始:', selector, 'root=', root ? 'custom' : 'document');
         let timer;
         const timeoutPromise = new Promise((_, reject) => {
-            timer = setTimeout(() => reject(new Error(`等待元素超时: ${selector}`)), timeout);
+            timer = setTimeout(() => {
+                d('waitForElement 超时:', selector);
+                reject(new Error(`等待元素超时: ${selector}`));
+            }, timeout);
         });
-        const waitPromise = root !== undefined
-            ? elmGetter.get(selector, root)
-            : elmGetter.get(selector);
-
-        return Promise.race([waitPromise, timeoutPromise]).finally(() => clearTimeout(timer));
+        let waitPromise;
+        if (window.elmGetter && typeof elmGetter.get === 'function') {
+            waitPromise = root !== undefined ? elmGetter.get(selector, root) : elmGetter.get(selector);
+        } else {
+            waitPromise = new Promise(resolve => {
+                const searchRoot = root || document;
+                const find = () => {
+                    const found = searchRoot.querySelectorAll(selector);
+                    if (found.length) {
+                        observer.disconnect();
+                        resolve(typeof $sp === 'function' ? $sp(found) : found);
+                    }
+                };
+                const observer = new MutationObserver(find);
+                observer.observe(searchRoot.nodeType === 9 ? searchRoot.documentElement : searchRoot, {
+                    childList: true, subtree: true
+                });
+                find();
+            });
+        }
+        return Promise.race([waitPromise, timeoutPromise]).then(result => {
+            d('waitForElement 成功:', selector, '命中数=', result && result.length);
+            return result;
+        }).finally(() => clearTimeout(timer));
     }
 
     // 给 Vue 实例加 updated hook，可移除，且同名 hook 不重复添加
@@ -1229,10 +1274,13 @@ var ajax = function() {
     }
 
     async function listCookies(details) {
+        d('listCookies 调用:', details.url, 'partitionKey=', details.partitionKey || '无');
         try {
             // 脚本猫推荐 Promise 形式：GM.cookie.list
             if (window.GM && GM.cookie && typeof GM.cookie.list === 'function') {
-                return asCookieArray(await GM.cookie.list(details));
+                const cookies = asCookieArray(await GM.cookie.list(details));
+                d('GM.cookie.list 返回:', details.url, cookies.length);
+                return cookies;
             }
             // 油猴 GM_cookie.list 支持 Promise / 回调；脚本猫也兼容回调形式
             if (typeof GM_cookie === 'function' && typeof GM_cookie.list === 'function') {
@@ -1242,7 +1290,9 @@ var ajax = function() {
                         if (settled) return;
                         settled = true;
                         clearTimeout(timer);
-                        resolve(asCookieArray(value));
+                        const arr = asCookieArray(value);
+                        d('GM_cookie.list 返回:', details.url, arr.length);
+                        resolve(arr);
                     };
                     const timer = setTimeout(() => finish([]), 3000);
                     try {
@@ -1276,6 +1326,7 @@ var ajax = function() {
         } catch (error) {
             d('读取 Cookie 失败：', details.url, error);
         }
+        d('listCookies 返回空:', details.url);
         return [];
     }
 
@@ -1297,15 +1348,20 @@ var ajax = function() {
     async function getSteamCookieHeader() {
         const all = [];
         for (const target of STEAM_COOKIE_TARGETS) {
+            d('Cookie 目标:', target.url);
             // 先读分区 Cookie（Chrome 第三方 Cookie 分区场景），再读普通 Cookie
             let cookies = asCookieArray(await listCookies({ url: target.url, partitionKey: target.partitionKey }));
+            d('分区 Cookie 命中:', target.url, cookies.length);
             if (!cookies.length) cookies = asCookieArray(await listCookies({ url: target.url }));
+            d('普通 Cookie 命中:', target.url, cookies.length);
             if (!cookies.length && typeof GM_cookie === 'function') {
                 // TM 5.2+：空 partitionKey 表示读取所有分区，后面按 name 去重
                 cookies = asCookieArray(await listCookies({ url: target.url, partitionKey: {} }));
+                d('全分区 Cookie 命中:', target.url, cookies.length);
             }
             if (cookies.length) all.push(...cookies);
         }
+        d('Cookie 合并后总数:', all.length);
         const header = cookieHeaderFrom(all);
         d('Steam Cookie 读取结果：', header
             ? header.split('; ').map(item => item.split('=')[0]).join(', ')
@@ -1320,6 +1376,7 @@ var ajax = function() {
             d('Steam Cookie 数量：', cookieHeader ? cookieHeader.split('; ').length : 0);
 
             const response = await new Promise((resolve, reject) => {
+                d('发起 Steam userdata 请求, anonymous=', isScriptCat(), '带Cookie=', Boolean(cookieHeader));
                 const details = {
                     method: 'GET',
                     url: 'https://store.steampowered.com/dynamicstore/userdata/',
@@ -1345,7 +1402,8 @@ var ajax = function() {
             const finalUrl = response.finalUrl || '';
             d('Steam userdata 响应：', {
                 status: response.status,
-                finalUrl: finalUrl
+                finalUrl: finalUrl,
+                responseTextLength: (response.responseText || '').length
             });
 
             if (/login|openid/i.test(finalUrl)) {
@@ -1370,6 +1428,11 @@ var ajax = function() {
                 wish: normalizeIds(data.rgWishlist),
                 sub: normalizeIds(data.rgOwnedPackages)
             };
+            d('Steam 数据解析:', {
+                own: state.own.length,
+                wish: state.wish.length,
+                sub: state.sub.length
+            });
 
             if (state.own.length + state.wish.length + state.sub.length === 0) {
                 notify(cookieHeader
@@ -1440,6 +1503,7 @@ var ajax = function() {
 
     function requestApi(url, method, data) {
         const token = getAccessToken();
+        d('requestApi 调用:', method, url, 'token长度=', token.length);
         if (!token) {
             return Promise.reject(new Error('未获取到 accessToken，请先登录 SteamPy'));
         }
@@ -1484,12 +1548,15 @@ var ajax = function() {
         const cache = readSaleCache();
         const hit = cache[id];
         if (hit && hit.expireTime > Date.now()) {
+            d('getSaleList 命中缓存:', id, '剩余秒=', Math.round((hit.expireTime - Date.now()) / 1000));
             return Promise.resolve(hit.data);
         }
 
         if (inflightSaleRequests.has(id)) {
+            d('getSaleList 复用进行中请求:', id);
             return inflightSaleRequests.get(id);
         }
+        d('getSaleList 发起请求:', id);
 
         const request = requestApi(`${steampyUrl}${listSaleUrl}`, 'GET', {
             gameId: id,
@@ -1589,16 +1656,21 @@ var ajax = function() {
     // 接口拦截
     ajaxHooker.hook(request => {
         if (KEYHOT_PATH_RE.test(request.url)) {
+            d('ajaxHooker 捕获 keyHot:', request.url);
             request.response = res => {
                 try {
                     const originalData = JSON.parse(res.responseText);
                     TempDataStore.setGameData(originalData);
                     res.responseText = JSON.stringify(originalData);
+                    d('keyHot 评分数据已写入, 条数=',
+                        Array.isArray(originalData) ? originalData.length
+                            : (originalData && originalData.result ? originalData.result.length : '未知'));
                 } catch (e) {
                     console.error('[SteamPy++] keyHot 接口数据处理失败：', e);
                 }
             };
         } else if (GETONE_PATH_RE.test(request.url)) {
+            d('ajaxHooker 捕获 getOne:', request.url);
             request.response = res => {
                 try {
                     const originalData = JSON.parse(res.responseText);
@@ -2246,6 +2318,10 @@ var ajax = function() {
     }
 
     function handlePathChange() {
+        d('handlePathChange:', currentPath(), {
+            isInitialized: isInitialized,
+            isSellerInitialized: isSellerInitialized
+        });
         if (isTargetPath() && !isInitialized) {
             d('run script in cdKey path');
             buyInit().catch(error => console.error('[SteamPy++] buyInit 失败：', error));
@@ -2263,24 +2339,28 @@ var ajax = function() {
 
     async function buyInit() {
         if (isInitialized) return;
+        d('buyInit 开始');
         isInitialized = true;
         try {
             injectStyles();
             await waitForElement('.tag.flex-row.align-items-center');
             insertFilterUI();
             await startContentMonitor();
+            d('buyInit 完成');
         } catch (error) {
             isInitialized = false;
+            d('buyInit 失败:', error && error.message);
             throw error;
         }
     }
 
     async function sellerInit() {
         if (isSellerInitialized) return;
+        d('sellerInit 开始');
         isSellerInitialized = true;
         try {
             await waitForElement('div.main > div.single-page-con > div > div', $dom('#main'));
-            d('sellerInit');
+            d('sellerInit 完成');
             await startModalListener();
             await addQuantitySort();
             await startSellListListener();
@@ -2299,6 +2379,7 @@ var ajax = function() {
     function syncRouteAndHandle() {
         const nextPath = currentPath();
         const pathChanged = nextPath !== lastPath;
+        if (pathChanged) d('路径变化:', lastPath, '->', nextPath);
         lastPath = nextPath;
         if (pathChanged || !isInitialized || !isSellerInitialized) {
             handlePathChange();
