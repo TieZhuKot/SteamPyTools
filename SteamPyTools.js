@@ -2,7 +2,7 @@
 // @name            SteamPyTools
 // @name:zh-CN      SteamPyTools
 // @name:en         SteamPyTools
-// @version         3.0
+// @version         3.1
 // @description     SteamPyTools 增强脚本：CDKey 市场按价格/好评/已拥有游戏筛选，游戏卡片显示 Steam 好评等级与评价数，支持鼠标中键直达 Steam 商店；卖家页显示历史最低价、在售排名与最低价提示，并新增按库存数量排序；支持手动同步 Steam 已拥有/愿望单数据，多地区接口适配与本地缓存。
 // @description:en  SteamPyTools enhances SteamPy: filter CDKey listings by price, rating and owned games; show Steam review tiers and counts on game cards; open Steam store with middle click; seller page gets historical low price, sale rank, lowest-price hints and stock sorting; manual Steam library/wishlist sync with multi-region support and local caching.
 // @author          TieZhuKot
@@ -1136,7 +1136,7 @@ try {
     // 固定引用脚本自带的 jQuery，避免站点后续覆盖全局 $ / jQuery
     const $sp = window.jQuery;
     const DEBUG = true;
-    const VERSION = '3.0';
+    const VERSION = '3.1';
 
     const GM_KEY_STEAM_GAMES = 'steamGameList';
     const GM_KEY_FILTER_STATE = 'steamPriceFilterState';
@@ -2108,7 +2108,7 @@ try {
             background: #409EFF !important;
         }
         .sp-filter-input {
-            width: .34rem;
+            width: .68rem;
             height: .28rem;
             padding: 0 .03rem;
             border: 1px solid #ccc;
@@ -2181,7 +2181,6 @@ try {
         minInp.placeholder = '低';
         minInp.title = '最低价';
         minInp.min = 0;
-        minInp.maxLength = 3;
         minInp.className = 'sp-filter-input';
         minInp.addEventListener('input', e => {
             filterState.minPrice = toNumber(e.target.value, 0);
@@ -2197,7 +2196,6 @@ try {
         maxInp.placeholder = '高';
         maxInp.title = '最高价';
         maxInp.min = 0;
-        maxInp.maxLength = 3;
         maxInp.className = 'sp-filter-input';
         maxInp.addEventListener('input', e => {
             filterState.maxPrice = toNumber(e.target.value, 9999);
