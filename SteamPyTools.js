@@ -2,7 +2,7 @@
 // @name            SteamPyTools
 // @name:zh-CN      SteamPyTools
 // @name:en         SteamPyTools
-// @version         2.6
+// @version         2.7
 // @description     SteamPyTools 增强脚本：CDKey 市场按价格/好评/已拥有游戏筛选，游戏卡片显示 Steam 好评等级与评价数，支持鼠标中键直达 Steam 商店；卖家页显示历史最低价、在售排名与最低价提示，并新增按库存数量排序；支持手动同步 Steam 已拥有/愿望单数据，多地区接口适配与本地缓存。
 // @description:en  SteamPyTools enhances SteamPy: filter CDKey listings by price, rating and owned games; show Steam review tiers and counts on game cards; open Steam store with middle click; seller page gets historical low price, sale rank, lowest-price hints and stock sorting; manual Steam library/wishlist sync with multi-region support and local caching.
 // @author          TieZhuKot
@@ -1136,7 +1136,7 @@ try {
     // 固定引用脚本自带的 jQuery，避免站点后续覆盖全局 $ / jQuery
     const $sp = window.jQuery;
     const DEBUG = true;
-    const VERSION = '2.6';
+    const VERSION = '2.7';
 
     const GM_KEY_STEAM_GAMES = 'steamGameList';
     const GM_KEY_FILTER_STATE = 'steamPriceFilterState';
@@ -1493,12 +1493,12 @@ try {
             ownedSteamAppIds = new Set(state.own);
             wishSteamAppIds = new Set(state.wish);
             applyFilterGameList();
+            // Vue3 页面没有 __vue__ 列表可改，直接重扫 DOM 给卡片加框
+            scanGameBlocks();
 
-            d('Steam 数据同步完成：', {
-                own: state.own.length,
-                wish: state.wish.length,
-                sub: state.sub.length
-            });
+            d('Steam 数据同步完成: own=', state.own.length,
+                'wish=', state.wish.length, 'sub=', state.sub.length,
+                'own示例=', state.own.slice(0, 5), 'wish示例=', state.wish.slice(0, 5));
             notify('同步Steam数据成功');
             return true;
         } catch (error) {
@@ -1663,6 +1663,13 @@ try {
                 const match = linkApps || linkApp;
                 if (match) appId = Number(match[1]);
             }
+        }
+
+        // 图片与链接都取不到时，用卡片游戏名从 keyHot 数据反查
+        if (!appId && gameName) {
+            const game = TempDataStore.findByGameName(gameName);
+            const found = Number(game && game.appId);
+            if (Number.isFinite(found) && found > 0) appId = found;
         }
 
         if (Number.isFinite(appId) && appId > 0) {
@@ -1857,6 +1864,20 @@ try {
             return this.ratingMap.get(Number(appId)) || null;
         },
 
+        // 新版卡片可能没有 steam/apps 图片 URL，用游戏名从 keyHot 数据反查 AppID
+        findByGameName(name) {
+            const content = this.steamGameData && this.steamGameData.result && this.steamGameData.result.content;
+            if (!Array.isArray(content) || !name) return null;
+            const target = String(name).trim().toLowerCase();
+            if (!target) return null;
+            return content.find(game => {
+                if (!game) return false;
+                const n1 = game.gameName ? String(game.gameName).trim().toLowerCase() : '';
+                const n2 = game.gameNameCn ? String(game.gameNameCn).trim().toLowerCase() : '';
+                return n1 === target || n2 === target;
+            }) || null;
+        },
+
         getRatingByAppId(appId) {
             const game = this.getGameInfo(appId);
             return game ? toNumber(game.rating, 0) : 0;
@@ -1965,15 +1986,20 @@ try {
         const appId = getSteamAppId(gameBlock);
         if (!appId) {
             renderRatingBadge(gameBlock, null);
+            gameBlock.classList.remove('sp-owned', 'sp-wishlisted');
             return;
         }
         const fingerprint = gameBlock.dataset.spFingerprint;
 
-        const nameEl = gameBlock.querySelector('.gameName');
-        if (nameEl) {
-            if (wishSteamAppIds.has(appId)) nameEl.classList.add('bg-blue');
-            else nameEl.classList.remove('bg-blue');
+        const isOwned = ownedSteamAppIds.has(appId);
+        const isWishlisted = wishSteamAppIds.has(appId);
+        gameBlock.classList.toggle('sp-owned', isOwned);
+        gameBlock.classList.toggle('sp-wishlisted', isWishlisted);
+        if (isOwned || isWishlisted) {
+            d('卡片标记: appId=', appId, isOwned ? '已拥有 ' : '', isWishlisted ? '愿望单' : '');
         }
+        const nameEl = gameBlock.querySelector('.gameName');
+        if (nameEl) nameEl.classList.toggle('bg-blue', isWishlisted);
 
         // 优先1：站点接口自带的评分字段（老版可能存在）
         const siteRating = TempDataStore.getRatingByAppId(appId);
@@ -2041,6 +2067,10 @@ try {
         .gameRating.mixed { background: #FFC107 !important; color: #333 !important; }
         .gameRating.negative { background: #FF9800 !important; }
         .gameRating.very-negative { background: #F44336 !important; }
+        .gameblock.sp-owned { outline: 3px solid #ff9800 !important; outline-offset: -3px !important; }
+        .gameblock.sp-wishlisted { outline: 3px solid #2196f3 !important; outline-offset: -3px !important; }
+        .gameblock.sp-owned.sp-wishlisted { outline: 3px dashed #9c27b0 !important; outline-offset: -3px !important; }
+        .gameName.bg-blue { color: #1976d2 !important; font-weight: 700 !important; }
         .sp-filter-group {
             display: inline-flex;
             align-items: center;
