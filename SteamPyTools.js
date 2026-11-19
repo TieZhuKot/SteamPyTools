@@ -2,7 +2,7 @@
 // @name            SteamPyTools
 // @name:zh-CN      SteamPyTools
 // @name:en         SteamPyTools
-// @version         2.2
+// @version         2.3
 // @description     SteamPyTools 增强脚本：CDKey 市场按价格/好评/已拥有游戏筛选，游戏卡片显示 Steam 好评等级与评价数，支持鼠标中键直达 Steam 商店；卖家页显示历史最低价、在售排名与最低价提示，并新增按库存数量排序；支持手动同步 Steam 已拥有/愿望单数据，多地区接口适配与本地缓存。
 // @description:en  SteamPyTools enhances SteamPy: filter CDKey listings by price, rating and owned games; show Steam review tiers and counts on game cards; open Steam store with middle click; seller page gets historical low price, sale rank, lowest-price hints and stock sorting; manual Steam library/wishlist sync with multi-region support and local caching.
 // @author          TieZhuKot
@@ -51,10 +51,10 @@
         }
     }
     window.__spShowBadge = spShowBadge;
-    spShowBadge('SteamPy 文件已加载 v2.2');
+    spShowBadge('SteamPy 文件已加载 v2.3');
     if (!document.body) {
         document.addEventListener('DOMContentLoaded', function () {
-            spShowBadge('SteamPy 文件已加载 v2.2');
+            spShowBadge('SteamPy 文件已加载 v2.3');
         });
     }
 
@@ -1136,7 +1136,7 @@ try {
     // 固定引用脚本自带的 jQuery，避免站点后续覆盖全局 $ / jQuery
     const $sp = window.jQuery;
     const DEBUG = true;
-    const VERSION = '2.2';
+    const VERSION = '2.3';
 
     const GM_KEY_STEAM_GAMES = 'steamGameList';
     const GM_KEY_FILTER_STATE = 'steamPriceFilterState';
@@ -1177,7 +1177,7 @@ try {
     });
     console.info('[SteamPyTools] 菜单命令注册: 同步Steam数据');
     if (typeof window.__spShowBadge === 'function') {
-        window.__spShowBadge('SteamPy 主逻辑已执行 v2.2', '#388e3c');
+        window.__spShowBadge('SteamPy 主逻辑已执行 v2.3', '#388e3c');
     }
 
     function isScriptCat() {
@@ -1789,27 +1789,31 @@ try {
         setGameData(data) {
             this.steamGameData = data;
             const map = new Map();
+            const byId = new Map();
             const content = data && data.result && data.result.content;
             if (Array.isArray(content)) {
                 content.forEach(game => {
-                    // 站点 keyHot 项可能是 id / appId / steamAppId，统一取能用的那个
-                    const id = Number(game && (game.appId ?? game.steamAppId ?? game.id));
-                    if (Number.isFinite(id)) map.set(id, game);
+                    // 同时按 appId 和长 id 建索引，兼容卡片不同取值方式
+                    const appId = Number(game && game.appId);
+                    const longId = game && game.id;
+                    if (Number.isFinite(appId) && appId > 0) map.set(appId, game);
+                    if (longId !== undefined && longId !== null) byId.set(String(longId), game);
                 });
                 if (DEBUG && content.length) {
                     const sample = content[0] || {};
-                    d('keyHot 首条完整数据:', JSON.stringify(sample).slice(0, 800));
-                    d('keyHot 评分字段: rating=', sample.rating,
-                        'ratingCount=', sample.ratingCount,
-                        'positiveRate=', sample.positiveRate,
-                        'reviewCount=', sample.reviewCount);
-                    d('keyHot 索引条数:', map.size, '/ 数据条数:', content.length);
+                    d('keyHot 首条: appId=', sample.appId, 'id=', sample.id,
+                        'rating=', sample.rating, 'steamApp=', sample.steamApp,
+                        'gameUrl=', sample.gameUrl);
+                    d('keyHot rating 分布(前10):',
+                        content.slice(0, 10).map(g => ({ appId: g.appId, rating: g.rating })));
+                    d('keyHot 索引(appId):', map.size, '/ byId:', byId.size, '/ 数据:', content.length);
                 }
             } else {
                 d('keyHot 未找到 result.content 数组, result 结构=',
                     data && data.result ? Object.keys(data.result) : String(data));
             }
             this.ratingMap = map;
+            this.idMap = byId;
         },
 
         getGameInfo(appId) {
@@ -1948,7 +1952,7 @@ try {
 
         // 都没有：异步从 Steam 商店拉评价后再渲染（缓存 + 去重 + 并发限制）
         renderRatingBadge(gameBlock, null);
-        ReviewStore.fetch(appId).then(data => {
+        if (false) ReviewStore.fetch(appId).then(data => {
             if (!data) return;
             const level = ReviewStore.level(data);
             if (!level) return;
@@ -2569,7 +2573,7 @@ try {
         });
         if (typeof window.__spShowBadge === 'function') {
             window.__spShowBadge(
-                'SteamPy v2.2 | ' + (isTargetPath() ? '市场页' : isSellerCDKeyPath() ? '卖家页' : '其他页') +
+                'SteamPy v2.3 | ' + (isTargetPath() ? '市场页' : isSellerCDKeyPath() ? '卖家页' : '其他页') +
                 ' | 筛选面板=' + (isInitialized ? '已就绪' : (isTargetPath() ? '等待中' : '不适用')),
                 isInitialized || isSellerInitialized ? '#388e3c' : '#f57c00'
             );
