@@ -2,7 +2,7 @@
 // @name            SteamPyTools
 // @name:zh-CN      SteamPyTools
 // @name:en         SteamPyTools
-// @version         3.3
+// @version         3.4
 // @description     SteamPyTools 增强脚本：CDKey 市场按价格/好评/已拥有游戏筛选，游戏卡片显示 Steam 好评等级与评价数，支持鼠标中键直达 Steam 商店；卖家页显示历史最低价、在售排名与最低价提示，并新增按库存数量排序；支持手动同步 Steam 已拥有/愿望单数据，多地区接口适配与本地缓存。
 // @description:en  SteamPyTools enhances SteamPy: filter CDKey listings by price, rating and owned games; show Steam review tiers and counts on game cards; open Steam store with middle click; seller page gets historical low price, sale rank, lowest-price hints and stock sorting; manual Steam library/wishlist sync with multi-region support and local caching.
 // @author          TieZhuKot
@@ -1095,7 +1095,7 @@ try {
     // 固定引用脚本自带的 jQuery，避免站点后续覆盖全局 $ / jQuery
     const $sp = window.jQuery;
     const DEBUG = false;
-    const VERSION = '3.3';
+    const VERSION = '3.4';
 
     const GM_KEY_STEAM_GAMES = 'steamGameList';
     const GM_KEY_FILTER_STATE = 'steamPriceFilterState';
@@ -1470,15 +1470,12 @@ try {
         loadState() {
             const defaults = defaultFilterState();
             const saved = readJSON(GM_KEY_FILTER_STATE, null);
-            if (!saved || typeof saved !== 'object') return defaults;
-            return {
-                minPrice: toNumber(saved.minPrice, defaults.minPrice),
-                maxPrice: toNumber(saved.maxPrice, defaults.maxPrice),
-                minRating: toNumber(saved.minRating, defaults.minRating),
-                isActive: Boolean(saved.isActive),
-                ratingFilterActive: Boolean(saved.ratingFilterActive),
-                hideOwned: Boolean(saved.hideOwned)
-            };
+            // 价格和好评筛选不跨会话恢复：每次打开默认选中"全部"且不过滤，
+            // 只有用户主动点击筛选条件才生效。仅"隐藏已拥有"开关沿用持久化状态。
+            if (saved && typeof saved === 'object') {
+                defaults.hideOwned = Boolean(saved.hideOwned);
+            }
+            return defaults;
         }
     };
 
@@ -2089,7 +2086,10 @@ try {
         presetContainer.className = 'flex-row jc-space-flex-start align-items-center';
         presetContainer.style.gap = '.04rem';
 
-        const presets = [{ text: '0-20元', min: 0, max: 20 }];
+        const presets = [
+            { text: '全部', min: 0, max: 9999, all: true },
+            { text: '0-20元', min: 0, max: 20 }
+        ];
         presets.forEach(p => {
             const btn = document.createElement('div');
             btn.className = 'tagBtn sp-filter-btn';
@@ -2099,7 +2099,7 @@ try {
             btn.onclick = () => {
                 filterState.minPrice = p.min;
                 filterState.maxPrice = p.max;
-                filterState.isActive = true;
+                filterState.isActive = !p.all;
                 StateManager.saveState(filterState);
                 syncInputValues();
                 applyFilterGameList();
@@ -2124,6 +2124,7 @@ try {
             filterState.minPrice = toNumber(e.target.value, 0);
             filterState.isActive = true;
             StateManager.saveState(filterState);
+            updatePresetHighlights();
         });
 
         const separator = document.createTextNode('-');
@@ -2139,6 +2140,7 @@ try {
             filterState.maxPrice = toNumber(e.target.value, 9999);
             filterState.isActive = true;
             StateManager.saveState(filterState);
+            updatePresetHighlights();
         });
 
         const filterBtn = document.createElement('button');
@@ -2236,9 +2238,10 @@ try {
         document.querySelectorAll('#priceFilterContainer .sp-filter-btn[data-max]').forEach(btn => {
             const btnMin = toNumber(btn.dataset.min, NaN);
             const btnMax = toNumber(btn.dataset.max, NaN);
-            const isMatch = filterState.isActive &&
-                filterState.minPrice === btnMin &&
-                filterState.maxPrice === btnMax;
+            // 未激活时默认高亮"全部"（0-9999）
+            const isMatch = filterState.isActive
+                ? (filterState.minPrice === btnMin && filterState.maxPrice === btnMax)
+                : (btnMin === 0 && btnMax === 9999);
             btn.classList.toggle('is-active', Boolean(shouldHighlight && isMatch));
         });
     }
@@ -2247,7 +2250,10 @@ try {
         // 只更新没有 data-max 的好评按钮
         document.querySelectorAll('#priceFilterContainer .sp-filter-btn[data-min]:not([data-max])').forEach(btn => {
             const btnMin = toNumber(btn.dataset.min, NaN);
-            const isMatch = filterState.ratingFilterActive && filterState.minRating === btnMin;
+            // 未激活时默认高亮"全部"（min=0）
+            const isMatch = filterState.ratingFilterActive
+                ? (filterState.minRating === btnMin)
+                : btnMin === 0;
             btn.classList.toggle('is-active', isMatch);
         });
     }
