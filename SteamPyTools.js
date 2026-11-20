@@ -2,7 +2,7 @@
 // @name            SteamPyTools
 // @name:zh-CN      SteamPyTools
 // @name:en         SteamPyTools
-// @version         3.2
+// @version         3.3
 // @description     SteamPyTools 增强脚本：CDKey 市场按价格/好评/已拥有游戏筛选，游戏卡片显示 Steam 好评等级与评价数，支持鼠标中键直达 Steam 商店；卖家页显示历史最低价、在售排名与最低价提示，并新增按库存数量排序；支持手动同步 Steam 已拥有/愿望单数据，多地区接口适配与本地缓存。
 // @description:en  SteamPyTools enhances SteamPy: filter CDKey listings by price, rating and owned games; show Steam review tiers and counts on game cards; open Steam store with middle click; seller page gets historical low price, sale rank, lowest-price hints and stock sorting; manual Steam library/wishlist sync with multi-region support and local caching.
 // @author          TieZhuKot
@@ -1095,7 +1095,7 @@ try {
     // 固定引用脚本自带的 jQuery，避免站点后续覆盖全局 $ / jQuery
     const $sp = window.jQuery;
     const DEBUG = false;
-    const VERSION = '3.2';
+    const VERSION = '3.3';
 
     const GM_KEY_STEAM_GAMES = 'steamGameList';
     const GM_KEY_FILTER_STATE = 'steamPriceFilterState';
@@ -1811,7 +1811,9 @@ try {
                 if (!game) return false;
                 const n1 = game.gameName ? String(game.gameName).trim().toLowerCase() : '';
                 const n2 = game.gameNameCn ? String(game.gameNameCn).trim().toLowerCase() : '';
-                return n1 === target || n2 === target;
+                // 新版 prkGame/keyHot 用 name，旧版用 gameName/gameNameCn
+                const n3 = game.name ? String(game.name).trim().toLowerCase() : '';
+                return n1 === target || n2 === target || n3 === target;
             }) || null;
         },
 
@@ -2009,6 +2011,7 @@ try {
         .gameblock.sp-owned.sp-wishlisted { outline: 3px dashed #9c27b0 !important; outline-offset: -3px !important; }
         .gameName.bg-blue { color: #1976d2 !important; font-weight: 700 !important; }
         body.sp-hide-owned .gameblock.sp-owned { display: none !important; }
+        .gameblock.sp-filter-hidden { display: none !important; }
         .sp-filter-group {
             display: inline-flex;
             align-items: center;
@@ -2174,8 +2177,9 @@ try {
                 filterState.minRating = p.min;
                 filterState.ratingFilterActive = p.min > 0;
                 StateManager.saveState(filterState);
-                applyFilterGameList();
                 updateRatingPresetHighlights();
+                applyFilterGameList();
+                ensureFilterRatings();
             };
             ratingFilterContainer.appendChild(btn);
         });
@@ -2207,7 +2211,24 @@ try {
         if (!targetContainer) return;
         targetContainer.appendChild(createFilterUI());
         syncInputValues();
-        if (filterState.isActive || filterState.ratingFilterActive) applyFilterGameList();
+        if (filterState.isActive || filterState.ratingFilterActive) {
+            applyFilterGameList();
+            ensureFilterRatings();
+        }
+    }
+
+    // Vue3 会重建筛选栏容器，定时检查并在丢失后补回，避免筛选 UI 消失
+    function ensureFilterUI() {
+        if (document.getElementById('priceFilterContainer')) return;
+        const anchor = document.querySelector('.tag.flex-row.align-items-center');
+        if (!anchor) return;
+        d('筛选栏被站点重建，重新插入');
+        anchor.appendChild(createFilterUI());
+        syncInputValues();
+        if (filterState.isActive || filterState.ratingFilterActive) {
+            applyFilterGameList();
+            ensureFilterRatings();
+        }
     }
 
     function updatePresetHighlights(shouldHighlight = true) {
@@ -2278,44 +2299,70 @@ try {
         return $sp(selector).get(0);
     }
 
-    // 记录每个 Vue 实例的原始列表，筛选永远从原始列表派生，避免不可逆过滤
-    let listStates = new WeakMap();
+    // 筛选改为 DOM 层显隐：站点新版是 Vue3，DOM 上没有 __vue__ / gameList，
+    // 旧实现会在第一行直接 return，导致价格筛选与好评筛选完全失效。
+    function parseCardPrice(text) {
+        if (!text) return null;
+        const m = String(text).replace(/,/g, '').match(/(\d+(?:\.\d+)?)/);
+        return m ? Number(m[1]) : null;
+    }
+
+    function getCardRating(appId) {
+        const siteRating = Number(TempDataStore.getRatingByAppId(appId));
+        if (siteRating > 0) return siteRating;
+        const cached = ReviewStore.get(appId);
+        return cached && !cached.noReviews && Number(cached.ratio) > 0
+            ? Number(cached.ratio)
+            : 0;
+    }
 
     function applyFilterGameList() {
-        const vm = $dom('.game_layout .game_layout');
-        if (!vm || !vm.__vue__) return;
+        const blocks = document.querySelectorAll('.gameblock');
+        if (!blocks.length) return;
 
-        const vue = vm.__vue__;
-        const current = Array.isArray(vue.gameList) ? vue.gameList : [];
-        let state = listStates.get(vue);
+        const priceActive = Boolean(filterState.isActive);
+        const ratingActive = Boolean(filterState.ratingFilterActive);
 
-        // lastApplied 与当前引用不一致，说明站点换了新列表（翻页/搜索），重建快照
-        if (!state || (state.lastApplied && current !== state.lastApplied)) {
-            state = { source: current.slice(), lastApplied: current };
-            listStates.set(vue, state);
-        }
+        blocks.forEach(block => {
+            let hide = false;
 
-        const filtered = state.source.filter(game => {
-            const price = toNumber(game && game.keyPrice, 0);
-            const priceShouldShow = !filterState.isActive ||
-                (price >= filterState.minPrice && price <= filterState.maxPrice);
+            if (priceActive) {
+                const priceEl = block.querySelector('.gamePrice');
+                const price = parseCardPrice(priceEl && priceEl.textContent);
+                if (price !== null) {
+                    hide = price < filterState.minPrice || price > filterState.maxPrice;
+                }
+            }
 
-            const appId = Number(game && game.appId);
-            const rating = TempDataStore.getRatingByAppId(appId);
-            const ratingShouldShow = !filterState.ratingFilterActive ||
-                rating >= filterState.minRating;
+            if (!hide && ratingActive) {
+                const appId = getSteamAppId(block);
+                if (appId) {
+                    const rating = getCardRating(appId);
+                    if (rating > 0) {
+                        hide = rating < filterState.minRating;
+                    } else if (!ReviewStore.waiting.has(appId)) {
+                        // 无评分/明确无评价视为不满足；正在抓取时先放行，避免整页闪空
+                        hide = true;
+                    }
+                }
+            }
 
-            if (filterState.hideOwned && ownedSteamAppIds.has(appId)) return false;
-
-            return priceShouldShow && ratingShouldShow;
+            block.classList.toggle('sp-filter-hidden', hide);
         });
+    }
 
-        const changed = filtered.length !== current.length ||
-            filtered.some((game, index) => game !== current[index]);
-
-        if (changed) {
-            vue.gameList = filtered;
-            state.lastApplied = filtered;
+    // 好评筛选依赖 Steam 评分，主动补齐当前页尚未缓存的卡片后再重算筛选
+    function ensureFilterRatings() {
+        if (!filterState.ratingFilterActive) return;
+        const jobs = [];
+        document.querySelectorAll('.gameblock').forEach(block => {
+            const appId = getSteamAppId(block);
+            if (!appId || getCardRating(appId) > 0 || ReviewStore.waiting.has(appId)) return;
+            jobs.push(ReviewStore.fetch(appId));
+        });
+        if (jobs.length) {
+            d('好评筛选：补齐评分', jobs.length, '条');
+            Promise.all(jobs).then(applyFilterGameList);
         }
     }
 
@@ -2332,6 +2379,9 @@ try {
             updateGameRating(block);
             processGameOpen(block);
         });
+        // 卡片重建 / 翻页后重新套用筛选，并防止筛选栏被 Vue3 更新掉
+        applyFilterGameList();
+        ensureFilterUI();
         if (DEBUG) {
             const withBadge = scope.querySelectorAll('.gameblock .gameRating').length;
             const signature = scope === document ? 'doc:' + blocks.length + '/' + withBadge : 'root:' + blocks.length + '/' + withBadge;
